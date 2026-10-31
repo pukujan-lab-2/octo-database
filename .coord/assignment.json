@@ -1,8 +1,8 @@
 {
   "schema_version": "0.1.0",
   "project": "Octo single-owner bootstrap",
-  "recorded_at": "2026-10-26T00:00:00Z",
-  "notes": "ACS hot-loader adopter state. Live join/continue order wins. Previous bootstrap lease expired; current orchestrator claimed the vacant seat under FIFO rules. FULL PCM + FULL CGM 0.5.12 required; release-train sync applied.",
+  "recorded_at": "2026-10-31T20:43:22+00:00",
+  "notes": "ACS hot-loader adopter state. Live join/continue order wins. Previous bootstrap lease expired; current orchestrator claimed the vacant seat under FIFO rules. FULL PCM + FULL CGM 0.5.13 required; stack 1.0.1 (agent-stack-train) applied.",
   "role_fill": {
     "mode": "join_continue_order",
     "seed_is_hint_only": true,
@@ -73,14 +73,14 @@
   },
   "pins": {
     "acs": {
-      "repo": "https://github.com/Pukujan/agent-custom-setup",
-      "revision": "aea4f1b71ea1a5e74c1ca8413053951e29be40fb",
+      "repo": "https://github.com/Pukujan/agent-stack-train",
+      "revision": "2e32f2c5ef010e784a28253e88e4aeeadf9cba5f",
       "module": "modules/coordination/multi-agent-hotload/v0.1.0",
       "version": "0.1.0"
     },
     "pcm": {
-      "repo": "https://github.com/Pukujan/project-continuity-modules",
-      "revision": "70dc17dcf96b99b9bf9308a774fdcfa0b70d3f6b",
+      "repo": "https://github.com/Pukujan/agent-stack-train",
+      "revision": "2e32f2c5ef010e784a28253e88e4aeeadf9cba5f",
       "cli_version": "0.7.0",
       "protocol": "0.1.0-draft",
       "role": "full_stack",
@@ -93,12 +93,13 @@
         "github_auto_merge_preference",
         "fail_closed_on_missing_gates",
         "leaf_parent_dependency_receipts"
-      ]
+      ],
+      "notes": "Full PCM for adopters: continuity/checkpoints plus PR-only, required CI gates, protection/auto-merge preference, fail-closed gates, leaf/parent receipts. The revision is the agent-stack-train commit it was installed from. Do not vendor PCM source."
     },
     "cgm": {
-      "repo": "https://github.com/Pukujan/content-generation-modules",
-      "revision": "100f3c3ff1f612f76ef11f713a7466778cd8aa00",
-      "version": "0.5.12",
+      "repo": "https://github.com/Pukujan/agent-stack-train",
+      "revision": "2e32f2c5ef010e784a28253e88e4aeeadf9cba5f",
+      "version": "0.5.13",
       "role": "full_stack",
       "modules": [
         "brand-foundation",
@@ -138,12 +139,13 @@
         "html_reports_compare_appendable": "human-sounding-writing",
         "generated_artifact_filenames": "human-output-naming",
         "contract": "docs/writing-routing.json + docs/ACS_VERIFY.md; required_load and always-on inject apply after validation"
-      }
+      },
+      "notes": "FULL CGM required for ACS and every hotloader adopter: all eight modules including human-output-naming. The revision is the agent-stack-train commit it was installed from. Validate with CGM's validate_content_system.py; then apply acs_prompt_inject. Do not vendor CGM source."
     },
     "oio": {
-      "repo": "https://github.com/Pukujan/observational-issue-ops",
-      "revision": "305adc5d09920d28e603a1b317108637cc30a624",
-      "version": "0.1.0"
+      "repo": "https://github.com/Pukujan/agent-stack-train",
+      "revision": "2e32f2c5ef010e784a28253e88e4aeeadf9cba5f",
+      "version": "0.3.0"
     }
   },
   "ticket_links": {

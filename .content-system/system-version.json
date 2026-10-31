@@ -1,10 +1,10 @@
 {
   "schema_version": "content-generation.adapter.v1",
   "system": "content-generation-modules",
-  "helper_repository": "https://github.com/Pukujan/content-generation-modules",
-  "helper_version": "0.5.12",
-  "helper_commit": "100f3c3ff1f612f76ef11f713a7466778cd8aa00",
-  "helper_pin_note": "FULL CGM 0.5.12 required: all eight modules. Validate with pinned scripts/validate_content_system.py; apply writing routing at agent boot.",
+  "helper_repository": "https://github.com/Pukujan/agent-stack-train",
+  "helper_version": "0.5.13",
+  "helper_commit": "2e32f2c5ef010e784a28253e88e4aeeadf9cba5f",
+  "helper_pin_note": "FULL CGM 0.5.13 required: all eight modules. Validate with pinned scripts/validate_content_system.py; apply writing routing at agent boot.",
   "modules": [
     "brand-foundation",
     "content-context",

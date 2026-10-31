@@ -58,10 +58,7 @@ ACS, PCM, and CGM are helpers, not product authorities. Use them only to the ext
 
 Pinned versions currently used by repository validation:
 
-- ACS 0.2.0 hot-loader module v0.1.0 @ `aea4f1b71ea1a5e74c1ca8413053951e29be40fb`.
-- PCM 0.7.0 @ `70dc17dcf96b99b9bf9308a774fdcfa0b70d3f6b`.
-- CGM 0.5.12 @ `100f3c3ff1f612f76ef11f713a7466778cd8aa00`.
-- OIO 0.2.0 @ `305adc5d09920d28e603a1b317108637cc30a624`.
+- Agent stack 1.0.1 (`Pukujan/agent-stack-train`) @ `2e32f2c5ef010e784a28253e88e4aeeadf9cba5f`: one checkout carrying ACS 0.2.0 (hot-loader module v0.1.0), PCM 0.7.0, CGM 0.5.13 and OIO 0.3.0. The certified versions live in the train's `stack-releases.json`; this repo's `stack-manifest.json` follows it.
 
 ## Git and delivery
 
@@ -99,7 +96,7 @@ The dev root (`D:\development` on Windows, `~/development` elsewhere, or whereve
 - To check, run the pinned ACS script: `python <acs>/modules/coordination/multi-agent-hotload/v0.1.0/scripts/dev_root_check.py --dev-root <dev root>`. It prints JSON and exits non-zero when it finds anything other than main checkouts. `--clean` shows a fix and only acts with `--yes`.
 - This repo's PCM workspace mode is `managed-worktrees`, which puts task worktrees inside the checkout, so `dev_root_check.py` reports them as stray worktrees. Until PCM can put them in the ACS cache, prefer sequential work in the main checkout and remove a task worktree as soon as its PR merges.
 
-Paste this at session boot along with the CGM `system_block` (it comes from the ACS hotloader's `PROMPT_INJECT.md` at `38f8f52`):
+Paste this at session boot along with the CGM `system_block` (it comes from the ACS hotloader's `PROMPT_INJECT.md` at the pinned stack commit):
 
 ```
 Dev root hygiene (ACS): the dev root (ACS_DEV_ROOT; default D:\development on Windows, ~/development elsewhere) holds exactly one main checkout per repo. Never create git worktrees, dependency or sibling clones, scratch folders, or caches there. Put them under the ACS cache instead: %LOCALAPPDATA%\acs\{deps,scratch,worktrees} on Windows, ~/.cache/acs/{deps,scratch,worktrees} on macOS/Linux (ACS_CACHE_DIR overrides). Check with scripts/dev_root_check.py.

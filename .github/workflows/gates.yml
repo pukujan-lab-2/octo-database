@@ -217,7 +217,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --quiet --depth 1 https://github.com/Pukujan/agent-stack-train.git "$VALIDATION_ROOT/train"
+          git clone --quiet https://github.com/Pukujan/agent-stack-train.git "$VALIDATION_ROOT/train"
+          git -C "$VALIDATION_ROOT/train" checkout --quiet 2e32f2c5ef010e784a28253e88e4aeeadf9cba5f
           "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/train/scripts/check_manifest.py" \
             --manifest stack-manifest.json \
             --train "$VALIDATION_ROOT/train/stack-releases.json"
@@ -226,18 +227,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --quiet https://github.com/Pukujan/project-continuity-modules.git "$VALIDATION_ROOT/pcm"
-          git -C "$VALIDATION_ROOT/pcm" checkout --quiet 70dc17dcf96b99b9bf9308a774fdcfa0b70d3f6b
-          PYTHONPATH="$VALIDATION_ROOT/pcm/src" "$VALIDATION_ROOT/venv/bin/python" -m continuity validate --root .
+          PYTHONPATH="$VALIDATION_ROOT/train/pcm/src" "$VALIDATION_ROOT/venv/bin/python" -m continuity validate --root .
 
       - name: Validate full CGM adapter
         shell: bash
         run: |
           set -euo pipefail
-          git clone --quiet https://github.com/Pukujan/content-generation-modules.git "$VALIDATION_ROOT/cgm"
-          git -C "$VALIDATION_ROOT/cgm" checkout --quiet 100f3c3ff1f612f76ef11f713a7466778cd8aa00
-          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/cgm/scripts/validate_content_system.py" \
-            --root "$VALIDATION_ROOT/cgm" \
+          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/train/cgm/scripts/validate_content_system.py" \
+            --root "$VALIDATION_ROOT/train/cgm" \
             --adapter .content-system \
             --project-root .
 
@@ -245,17 +242,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --quiet https://github.com/Pukujan/agent-custom-setup.git "$VALIDATION_ROOT/acs"
-          git -C "$VALIDATION_ROOT/acs" checkout --quiet aea4f1b71ea1a5e74c1ca8413053951e29be40fb
-          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/acs/modules/coordination/multi-agent-hotload/v0.1.0/scripts/hotload_check.py" \
-            --root "$VALIDATION_ROOT/acs/modules/coordination/multi-agent-hotload/v0.1.0" \
+          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/train/acs/modules/coordination/multi-agent-hotload/v0.1.0/scripts/hotload_check.py" \
+            --root "$VALIDATION_ROOT/train/acs/modules/coordination/multi-agent-hotload/v0.1.0" \
             --assignment "$GITHUB_WORKSPACE/.coord/assignment.json" \
-            --cgm-root "$VALIDATION_ROOT/cgm" \
+            --cgm-root "$VALIDATION_ROOT/train/cgm" \
             --adopter-root "$GITHUB_WORKSPACE"
 
       - name: Check dev root layout (ACS dev_root_check)
         shell: bash
         run: |
           set -euo pipefail
-          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/acs/modules/coordination/multi-agent-hotload/v0.1.0/scripts/dev_root_check.py" \
+          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/train/acs/modules/coordination/multi-agent-hotload/v0.1.0/scripts/dev_root_check.py" \
             --dev-root "$(dirname "$GITHUB_WORKSPACE")"

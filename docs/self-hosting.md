@@ -38,7 +38,7 @@ Octo runs as a three-container Docker Compose project on gravebuster:
 - **`octo-web`** (`caddy:2-alpine`): Serves Vite static production assets from `/srv`, serves `/healthz` for container liveness, and reverse-proxies `/api/*` and `/health` to `octo-api:3001`.
 - **`octo-api`** (`node:22-bookworm-slim`): Platform server running `tsx src/server/index.ts`.
 - **`octo-db`** (`pgvector/pgvector:pg16`): Dedicated Postgres database with Supabase auth scaffolding and canonical migrations loaded on init.
-- **`octo-graph`** (`falkordb/falkordb-server:6.0.1`): The per-workspace graph engine, on the internal network only with no published port. Agents reach a graph only through Octo's mediated API/MCP, which derives the graph name from the authenticated workspace and holds the password. It is an in-memory, rebuildable projection of Postgres, so it carries no data volume and the API does not depend on it.
+- **`octo-graph`** (`falkordb/falkordb-server:6.0.1`): The per-workspace graph engine, on the internal network only with no published port. Agents reach a graph only through Octo's mediated API/MCP, which derives the graph name from the authenticated workspace and holds the password. It is an in-memory, rebuildable projection of Postgres, and the API does not depend on it. Its save file sits on the `octo-graph-data` volume so a recreate keeps the graph instead of forcing a rebuild.
 
 ---
 

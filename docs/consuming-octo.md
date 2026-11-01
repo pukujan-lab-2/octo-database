@@ -327,6 +327,38 @@ If the DuckDB native module or the object store is unavailable, `/health` report
 ANALYTICS_NOT_CONFIGURED`. The rest of Octo keeps working; analytics is an optional
 surface, not a boot dependency.
 
+## Traces and eval scores
+
+Each workspace has one project in the hosted Phoenix trace viewer, named after the
+workspace slug. Octo sits in front of it: an agent never needs a Phoenix login or the
+Phoenix secret, only its normal Octo key.
+
+| To | Call | Scope |
+| --- | --- | --- |
+| Send traces | `POST /api/workspaces/<id>/otel/v1/traces` (OTLP/HTTP, protobuf, optional gzip) | `write` |
+| Score a span | `POST /api/workspaces/<id>/otel/v1/span_annotations` or MCP `record_eval_scores` | `write` |
+| Read traces back | `GET /api/workspaces/<id>/otel/read/<resource>` or MCP `read_traces` | `read` |
+| Get the viewer link | `GET /api/workspaces/<id>/otel/link` or MCP `get_trace_link` | `read` |
+
+`<resource>` is `spans`, `traces`, `sessions`, `span_annotations`, `trace_annotations`,
+`session_annotations` or `annotation_configs`. Query parameters pass through to Phoenix
+(`limit`, `cursor`, `start_time`, `end_time`, `trace_id`, `span_id`, `name`,
+`status_code`, `span_ids` for annotations), and a result carries `next_cursor` to page.
+The project is always the workspace's own, so a read cannot reach another workspace's
+traces. A workspace that has sent no spans yet reads as an empty result.
+
+An eval score is a Phoenix span annotation: `{span_id, name, annotator_kind:
+"LLM" | "CODE" | "HUMAN", result: {score, label, explanation}}`. Octo stores scores;
+it does not run judges. Whatever scores a span (your own LLM judge, a script, a
+person) writes the result with `record_eval_scores`, and `read_traces` with
+`span_annotations` reads it back.
+
+The viewer link opens Phoenix, which has its own users and login and does not use the
+Octo session. Agents should read through `read_traces` instead of the link.
+
+Not exposed: Phoenix datasets, experiments and prompts. Phoenix keeps those for the
+whole installation rather than per project, so Octo cannot fence them per workspace.
+
 ## The vault: three token families, and what each one can see
 
 Octo's vault holds the owner's real vendor credentials. Three different tokens touch

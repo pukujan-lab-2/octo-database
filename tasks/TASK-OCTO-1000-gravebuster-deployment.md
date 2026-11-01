@@ -166,3 +166,26 @@ Blocked/uncertain:
 
 Next:
 - Open feature issues: #400 Umami, #399 RAG graph step, #395 shared embed/rerank endpoints, #393 Retrieval/Deployments views, #391 filtered-search scan, #385 octo-graph volume; #410 rule enforcement for Claude sessions
+
+### 2026-11-01 02:55:45 UTC — claude-opus-5-5
+
+<!-- continuity:checkpoint {"agent":"claude-opus-5-5","blocked":[],"changed":["none"],"completed":["#419 verification: #420 PROJECT/ARCHITECTURE rewrite, #421 generated isolation tests over every route and MCP tool (also fixed the shadowed schedule DELETE route), #423 RAG/rerank/graph metamorphic tests, #424 TLA+ models checked by TLC in gates, #425 PDD section 8 as the contract"],"decisions":["TLA+ findings are pinned as expected failures, not fixed: unhashed restore can overwrite good R2 bytes; archive can prune bytes an on-demand recall just restored; a lost provisioning race orphans a database; in-flight requests finish after key revoke"],"evidence":["PRs 420, 421, 423, 424 and 425 merged with gates green; gates run 41266674154 shows all ten TLC configs at their expected exit"],"evidence_class":"observed","next_action":"Owner to choose which TLA+ findings to fix (restore without archive_hash is the one that can lose bytes); open feature issues #400 #399 #395 #393 #391 #385 #410","protocol_version":"0.1.0-draft","schema":"project-continuity.checkpoint.v1","task_id":"OCTO-1000","timestamp":"2026-11-01T02:55:45Z"} -->
+<!-- continuity:checkpoint-operation {"payload_sha256":"364ab783c2200d3c32526f305c0b764c010415c7bc8cbcb4afb8a1c6f9e16d63","request_id":"34a1e3d5a45d41f8866f9366729bc303","schema":"project-continuity.checkpoint-operation.v1","task_id":"OCTO-1000"} -->
+
+Completed:
+- #419 verification: #420 PROJECT/ARCHITECTURE rewrite, #421 generated isolation tests over every route and MCP tool (also fixed the shadowed schedule DELETE route), #423 RAG/rerank/graph metamorphic tests, #424 TLA+ models checked by TLC in gates, #425 PDD section 8 as the contract
+
+Evidence:
+- PRs 420, 421, 423, 424 and 425 merged with gates green; gates run 41266674154 shows all ten TLC configs at their expected exit
+
+Decisions:
+- TLA+ findings are pinned as expected failures, not fixed: unhashed restore can overwrite good R2 bytes; archive can prune bytes an on-demand recall just restored; a lost provisioning race orphans a database; in-flight requests finish after key revoke
+
+Changed:
+- none
+
+Blocked/uncertain:
+- none
+
+Next:
+- Owner to choose which TLA+ findings to fix (restore without archive_hash is the one that can lose bytes); open feature issues #400 #399 #395 #393 #391 #385 #410

@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1.0",
   "project": "Octo single-owner bootstrap",
-  "recorded_at": "2026-11-01T11:52:15+00:00",
+  "recorded_at": "2026-11-01T22:28:07+00:00",
   "notes": "ACS hot-loader adopter state. Live join/continue order wins. Previous bootstrap lease expired; current orchestrator claimed the vacant seat under FIFO rules. FULL PCM + FULL CGM 0.5.13 required; stack 1.0.1 (agent-stack-train) applied.",
   "role_fill": {
     "mode": "join_continue_order",
@@ -80,7 +80,7 @@
     },
     "pcm": {
       "repo": "https://github.com/Pukujan/agent-stack-train",
-      "revision": "a796c21e5a7ceb21e5dafcfdf29dd11d1d0f3dd3",
+      "revision": "496bf33e0a8327345a8e3ba19e3dc40eae47164a",
       "cli_version": "0.7.0",
       "protocol": "0.1.0-draft",
       "role": "full_stack",
@@ -98,7 +98,7 @@
     },
     "cgm": {
       "repo": "https://github.com/Pukujan/agent-stack-train",
-      "revision": "a796c21e5a7ceb21e5dafcfdf29dd11d1d0f3dd3",
+      "revision": "496bf33e0a8327345a8e3ba19e3dc40eae47164a",
       "version": "0.5.13",
       "role": "full_stack",
       "modules": [

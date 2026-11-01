@@ -3,8 +3,7 @@
 **Status:** draft, derived from accepted issues
 **Authority:** issue #1 (program) and the live issues it names. This document is a
 navigation aid; it creates no scope and no gates (per issue #18).
-**Last synced:** 2026-10-01 — reflects issue #61 research and the approved design
-in `docs/superpowers/specs/2026-10-01-octo-workspace-data-plane-design.md`.
+**Last synced:** 2026-10-31. Section 8 is the contract the tests and models check (#419).
 
 ## 1. What Octo is
 
@@ -84,6 +83,8 @@ active_r2 ──archive──▶ archiving ──▶ archived_drive
   and then streams from R2. Callers never touch Drive directly.
 - Copy→verify(hash)→persist→delete ordering; the cold copy is retained on
   restore.
+- One archive or restore job runs per file at a time. The on-demand recall is
+  not part of that queue; section 8 lists what that allows.
 
 ## 5. Identity, keys, and scopes
 
@@ -144,10 +145,12 @@ scope. The dashboard shows the same, with a copyable example.
 Two independent layers, both required for destructive operations:
 
 1. **Role + scope** — the caller's workspace role and the key's scopes.
-2. **Human confirmation** — a per-account confirmation secret, checked only for
-   human sessions. An API-key caller can **never** satisfy it, whatever its
-   scopes. This is what makes "a blind agent cannot delete a workspace" a
-   structural fact rather than a policy.
+2. **Human confirmation** — a one-time code or the per-account confirmation
+   secret, plus an MFA code when MFA is enrolled, checked only for human
+   sessions. An API key can **never** satisfy it, whatever its scopes. The one
+   exception is a key the owner listed as their own agent's, which confirms on
+   the owner's behalf. Passing opens a two-minute window in which the same
+   person's next confirmations need no codes.
 
 Workspace delete additionally requires typing the workspace slug, and refuses
 while any file is mid-archive.
@@ -161,14 +164,62 @@ while any file is mid-archive.
 - A separate admin console (Supabase/provider surfaces are used for deep
   infrastructure administration).
 
-## 8. Verification
+## 8. Verification: the contract
 
-Every slice ships with: happy-path integration proof, authorization-negative
-proof, and — where side effects exist — restart/idempotency proof. The
-cross-cutting relations that must hold for *any* input are enumerated in the
-metamorphic test strategy in the design spec, and the user-visible path is
-additionally checked with Playwright and the vision audit in CI.
+These are the properties Octo promises. Each names the test or model that
+checks it in `gates`; a change that breaks one fails CI.
 
-Evidence (merged SHAs, green `gates`, browser trace, negative-test results) is
-linked on the owning issue before it closes. No slice closes on screenshots
+### Workspaces stay apart
+
+| Property | Checked by |
+|---|---|
+| Every route that needs a login refuses a request with no credential or a revoked key (401). | `tests/e2e/route-isolation.spec.ts` |
+| Every workspace route refuses another workspace's key and a non-member's session (403, or 404 where the workspace is hidden by row-level security). | `tests/e2e/route-isolation.spec.ts` |
+| A read-only key is refused on every write and every confirmed route; the vault refuses every API key. | `tests/e2e/route-isolation.spec.ts` |
+| Every MCP workspace tool refuses another workspace's key and session; a read-only key only lists tools it may call. | `tests/e2e/route-isolation.spec.ts` |
+| The route table those tests run from matches the routes in the code, so a new route cannot ship unchecked. | `tests/unit/route-table-drift.test.ts` |
+
+### Search and the graph
+
+| Property | Checked by |
+|---|---|
+| Adding another workspace's documents leaves a workspace's search results identical: same chunks, order and scores. | `tests/e2e/rag-graph-metamorphic.spec.ts` (MR-S1) |
+| A filter returns a subset of the unfiltered results, each passing the filter. | MR-S2, same file |
+| Rerank only reorders: it never adds, drops or changes a result. | `tests/unit/rerank-metamorphic.test.ts` (MR-R1 to R4) |
+| Projecting the same rows twice gives the same graph, node for node and edge for edge. | MR-G1 |
+| Another workspace's projection never changes this workspace's graph. | MR-G2 |
+
+### Concurrency and failure (TLA+ models in `verification/tla/`)
+
+| Property | Model and config | Holds today |
+|---|---|---|
+| Two identical workspace creates make one workspace (`slug` is unique), and at most one database is recorded for it, one that exists. | `WorkspaceProvisioning` | yes |
+| A provisioning request that loses the race leaves nothing behind. | `WorkspaceProvisioningOrphan` | **no**: its database and role stay |
+| A live file always has a good copy in R2 or Drive, through crashes, failed calls, bad Drive bytes and on-demand recall. | `FileLifecycleUnhashedRestore` | **no**: see below |
+| Once no job or recall is running, the file's state says where its bytes are. | `FileLifecycleOnDemandRace` | **no**: see below |
+| A revoked key starts no new request. | `KeyRevocation` | yes |
+| An API key (other than the owner's listed agent key) never passes confirmation; a session skips codes only inside the window after a pass. | `KeyRevocation` | yes |
+| No write lands after a key is revoked. | `KeyRevocationInFlight` | **no**: requests already past authentication finish |
+
+Where a property does not hold, the model pins today's behavior as an expected
+failure and a fixed variant shows what would make it hold:
+
+- **Restore can overwrite good bytes.** When archive verification, or the state
+  update after it, fails, the Drive locator is saved without `archive_hash`. A
+  later restore cannot check the Drive copy and writes it over R2. Saving the
+  hash with the locator fixes it (`FileLifecycle` checks that variant).
+- **Archive can prune bytes a recall just restored.** The file ends `active_r2`
+  with no R2 bytes. Drive still holds them; downloads fail until a restore job
+  runs.
+
+When a fix lands, its config's expected result in `verification/tla/check.sh`
+flips and this table changes with it.
+
+### Per slice
+
+Every slice also ships with a happy-path integration test, an
+authorization-negative test, and, where it has side effects, a restart or
+idempotency test. The user-visible path is checked with Playwright and the
+vision audit in CI. Evidence (merged SHAs, green `gates`, negative-test results)
+is linked on the owning issue before it closes. No slice closes on screenshots
 alone.

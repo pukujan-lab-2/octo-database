@@ -178,12 +178,15 @@ No web framework, no DI container, no ORM, no event bus. The raw-`http` ordered 
 
 ## Known gaps
 
-These are true of `main` today. Each is a fact to plan around, not a decision.
+These are true of `main` today. Each is a fact to plan around, not a decision. The race and failure ones are pinned as expected failures in `verification/tla/` (see `docs/PDD.md` section 8).
 
 - **The nightly backup misses workspace databases.** `deploy/mac/backup.sh` runs `pg_dump -d postgres`, so only the control database is saved (#202).
 - **Row-level security depends on configuration.** If `OCTO_DB_URL` and `OCTO_SERVICE_URL` are unset, both pools fall back to `DATABASE_URL`, a superuser, and RLS filters nothing (#111). Production sets both.
 - **`octo.graph_projections` has no tenant fence**, unlike the other tenant tables.
 - **Two concurrent database provisions for one workspace** can both pass the "already provisioned" check; the loser would leave an orphaned database and role.
+- **A restore can overwrite good R2 bytes.** If archive verification, or the state update after it, fails, the Drive locator is saved without `archive_hash`, so a later restore has nothing to check the Drive copy against.
+- **An archive job can prune bytes an on-demand recall just restored**, leaving the file `active_r2` with no R2 bytes until a restore job runs. Drive keeps its copy.
+- **A request already past authentication finishes after its key is revoked.** Revocation stops new requests only.
 - **Deleting a workspace leaves its files** in R2 and Drive and reports them as `orphanedObjects`. Deleting an archived file does not delete its Drive copy.
 - **Confirm codes and the two-minute window are in memory**, lost on restart and not shared between processes. Revoking a key needs the `delete` scope but no confirmation.
 - **Google sign-in sends no OAuth `state` parameter**, and reads the `id_token` without checking its signature (it comes straight from Google's token endpoint).

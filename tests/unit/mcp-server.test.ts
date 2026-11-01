@@ -50,6 +50,7 @@ describe('Octo MCP adapter', () => {
       'get_analytics_result',
       'get_document',
       'get_ops_summary',
+      'get_trace_link',
       'graph_health',
       'guide',
       'ingest_document',
@@ -68,7 +69,9 @@ describe('Octo MCP adapter', () => {
       'query_graph',
       'query_workspace',
       'query_workspace_database',
+      'read_traces',
       'record_epistemic',
+      'record_eval_scores',
       'register_analytics_spec',
       'register_dataset',
       'rename_document',
@@ -223,6 +226,35 @@ describe('Octo MCP adapter', () => {
     });
 
     expect(calls).toEqual(['http://octo.test/api/jobs/j1/retry?workspaceId=w1']);
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('reads a workspace\'s traces through the read route', async () => {
+    const calls: string[] = [];
+    const client = await connect(apiWith(200, '{"data":[],"next_cursor":null}', calls));
+
+    const result = await client.callTool({
+      name: 'read_traces',
+      arguments: { workspaceId: 'w1', resource: 'spans', query: { limit: 5, status_code: 'ERROR' } },
+    });
+
+    expect(calls).toEqual(['http://octo.test/api/workspaces/w1/otel/read/spans?limit=5&status_code=ERROR']);
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('records eval scores as span annotations', async () => {
+    const calls: string[] = [];
+    const client = await connect(apiWith(200, '{"data":[]}', calls));
+
+    const result = await client.callTool({
+      name: 'record_eval_scores',
+      arguments: {
+        workspaceId: 'w1',
+        scores: [{ span_id: 'abc', name: 'correctness', annotator_kind: 'LLM', result: { score: 1 } }],
+      },
+    });
+
+    expect(calls).toEqual(['http://octo.test/api/workspaces/w1/otel/v1/span_annotations?sync=true']);
     expect(result.isError).toBeFalsy();
   });
 

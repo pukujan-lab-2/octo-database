@@ -33,6 +33,8 @@ const GUIDE_TOPICS: Record<string, string> = {
     'The epistemic ledger is append-only and bitemporal: record_epistemic writes; query_claims_as_of and query_belief_as_of read as of a recorded-time and/or valid-time instant.',
   analytics:
     'register_dataset registers immutable Parquet versions (append: true adds new date partitions to the newest one). query_dataset runs a named spec: the built-in job-failures-by-type-month@1, or a workspace spec ws:<slug>@<n> registered with register_analytics_spec, with its params. Poll get_analytics_query_status, then get_analytics_result. register_analytics_spec registers your own SELECT; schedule_analytics runs a spec on an interval and writes the rows into analytics.<table> in the workspace database.',
+  traces:
+    "A workspace has one Phoenix project, named after its slug. Send traces to POST /api/workspaces/<id>/otel/v1/traces (OTLP/HTTP, normal Octo key). read_traces reads it back: resource is spans, traces, sessions, span_annotations, trace_annotations, session_annotations or annotation_configs, and query passes through to Phoenix (limit, cursor, start_time, end_time, trace_id, span_id, name, status_code ...). record_eval_scores attaches scores to spans by span_id. get_trace_link returns the viewer URL, which needs a Phoenix login; agents should use read_traces instead. Phoenix datasets, experiments and prompts are not per-workspace, so Octo does not expose them.",
   keys: 'mint_key is human-stamped: it needs a session with the confirmation secret. A token can only narrow its own authority, never widen scopes or escape its workspace. The raw secret is shown exactly once.',
 };
 
@@ -63,6 +65,9 @@ export const TOOL_ACTIONS: Record<string, string> = {
   list_ops_events: 'ops.list',
   get_ops_summary: 'ops.summary',
   retry_job: 'jobs.enqueue',
+  read_traces: 'traces.read',
+  record_eval_scores: 'traces.ingest',
+  get_trace_link: 'traces.link',
   register_dataset: 'datasets.register',
   query_dataset: 'analytics.query',
   get_analytics_query_status: 'analytics.query_status',
@@ -109,7 +114,7 @@ export function createOctoMcpServer(api: OctoApi): McpServer {
     {
       instructions: [
         'Octo is a self-hosted workspace data platform and the data layer for the projects it serves: do not stand up a separate database for a project Octo serves.',
-        'Only the tools your key can use are listed. Call guide with a topic (workspaces, ledger, analytics, keys) for how a surface works.',
+        'Only the tools your key can use are listed. Call guide with a topic (workspaces, ledger, analytics, traces, keys) for how a surface works.',
         "Octo's repository is read-only to adopters: propose a change as an OIO observational issue, never a pull request.",
       ].join(' '),
     }
@@ -546,6 +551,70 @@ export function createOctoMcpServer(api: OctoApi): McpServer {
     async ({ workspaceId }) => {
       try {
         return asText(await api.getOpsSummary({ workspaceId }));
+      } catch (error) {
+        return asError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'read_traces',
+    "Read a workspace's traces from its own Phoenix project: spans, traces, sessions, or their annotations (eval scores) and annotation configs. Read-only. Page with the next_cursor in the result. For eval scores, read span_annotations with span_ids.",
+    {
+      workspaceId: z.string().describe('The workspace whose traces to read'),
+      resource: z
+        .enum(['spans', 'traces', 'sessions', 'span_annotations', 'trace_annotations', 'session_annotations', 'annotation_configs'])
+        .describe('What to read'),
+      query: z
+        .record(z.string(), z.union([z.string(), z.number()]))
+        .optional()
+        .describe('Phoenix filters, e.g. {limit: 50, trace_id: "...", status_code: "ERROR", start_time: "2026-11-01T00:00:00Z", span_ids: "id1,id2"}'),
+    },
+    async ({ workspaceId, resource, query }) => {
+      try {
+        return asText(await api.readTraceData({ workspaceId, resource, ...(query === undefined ? {} : { query }) }));
+      } catch (error) {
+        return asError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'record_eval_scores',
+    'Attach eval scores to spans in the workspace project. Each item is a Phoenix span annotation: {span_id, name, annotator_kind: "LLM"|"CODE"|"HUMAN", result: {score, label, explanation}}. Requires the write scope.',
+    {
+      workspaceId: z.string().describe('The workspace whose spans are scored'),
+      scores: z
+        .array(
+          z.object({
+            span_id: z.string().describe('The span being scored (hex span id from read_traces)'),
+            name: z.string().describe('The eval name, e.g. correctness'),
+            annotator_kind: z.enum(['LLM', 'CODE', 'HUMAN']),
+            result: z.object({
+              score: z.number().optional(),
+              label: z.string().optional(),
+              explanation: z.string().optional(),
+            }),
+          })
+        )
+        .describe('The scores to record'),
+    },
+    async ({ workspaceId, scores }) => {
+      try {
+        return asText(await api.recordEvalScores({ workspaceId, data: scores }));
+      } catch (error) {
+        return asError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'get_trace_link',
+    "Get the URL of the workspace's project in the Phoenix viewer. Opening it needs a Phoenix login; agents should use read_traces. Read-only.",
+    { workspaceId: z.string().describe('The workspace whose viewer link to get') },
+    async ({ workspaceId }) => {
+      try {
+        return asText(await api.getTraceLink({ workspaceId }));
       } catch (error) {
         return asError(error);
       }

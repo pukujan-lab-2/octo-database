@@ -331,6 +331,14 @@ export const OCTO_CAPABILITIES: CapabilityDescriptor[] = [
       'Send OTLP/HTTP traces (application/x-protobuf, optionally gzip). Octo forwards them to the workspace\'s own Phoenix project; the project is derived from the workspace, never passed by the caller. Eval scores: POST /api/workspaces/<id>/otel/v1/span_annotations (Phoenix span annotation body).',
   },
   {
+    action: 'traces.read',
+    method: 'GET',
+    path: '/api/workspaces/<id>/otel/read/<resource>',
+    requiredScope: 'read',
+    description:
+      "Read the workspace's own Phoenix project: <resource> is spans, traces, sessions, span_annotations, trace_annotations, session_annotations or annotation_configs. Query parameters (limit, cursor, start_time, end_time, trace_id, name, status_code, span_ids ...) pass through to Phoenix. The project is derived from the workspace, never passed by the caller.",
+  },
+  {
     action: 'traces.link',
     method: 'GET',
     path: '/api/workspaces/<id>/otel/link',

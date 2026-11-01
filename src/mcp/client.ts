@@ -273,6 +273,29 @@ export class OctoApi {
     return this.request('GET', `/api/ops/events?${params.toString()}`);
   }
 
+  readTraceData(input: { workspaceId: string; resource: string; query?: Record<string, string | number> }): Promise<unknown> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(input.query ?? {})) params.set(key, String(value));
+    const search = params.toString();
+    return this.request(
+      'GET',
+      `/api/workspaces/${encodeURIComponent(input.workspaceId)}/otel/read/${input.resource}${search ? `?${search}` : ''}`
+    );
+  }
+
+  /** Posts eval scores as Phoenix span annotations (JSON body). */
+  recordEvalScores(input: { workspaceId: string; data: unknown[] }): Promise<unknown> {
+    return this.request(
+      'POST',
+      `/api/workspaces/${encodeURIComponent(input.workspaceId)}/otel/v1/span_annotations?sync=true`,
+      { data: input.data }
+    );
+  }
+
+  getTraceLink(input: { workspaceId: string }): Promise<unknown> {
+    return this.request('GET', `/api/workspaces/${encodeURIComponent(input.workspaceId)}/otel/link`);
+  }
+
   getOpsSummary(input: { workspaceId: string }): Promise<unknown> {
     return this.request('GET', `/api/ops/summary?workspaceId=${encodeURIComponent(input.workspaceId)}`);
   }

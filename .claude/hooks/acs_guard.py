@@ -662,6 +662,25 @@ def session_checkouts(project: Path, event: dict) -> tuple[list[Path], list[Path
     return tops, written
 
 
+# Coordination files the pack rewrites as agents take the seat or claim tasks. They are local
+# runtime state (ROLES.md: the claim file is the seat of record, not GitHub), so a change to one
+# is not unfinished work (#104).
+RUNTIME_STATE = (".coord/boss_claim.json", ".coord/board.json", ".coord/board-events.jsonl")
+
+
+def runtime_state(top: Path) -> set[str]:
+    """The checkout's coordination runtime files, including the assignment's own claim file path."""
+    paths = set(RUNTIME_STATE)
+    try:
+        assignment = json.loads((top / ".coord" / "assignment.json").read_text(encoding="utf-8"))
+        claim = assignment["boss_failover"]["check_in"]["claim_file_path"]
+        if isinstance(claim, str) and claim.strip():
+            paths.add(Path(claim.strip()).as_posix())
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return paths
+
+
 def names(paths: list[str], limit: int = 5) -> str:
     return ", ".join(f"`{p}`" for p in paths[:limit]) + (" …" if len(paths) > limit else "")
 
@@ -704,8 +723,12 @@ def pull_request_problem(top: Path, branch: str) -> tuple[str | None, str | None
 
 
 def auto_merge_allowed(top: Path) -> bool:
-    """False only when GitHub says the repository turns auto-merge off; unknown counts as allowed."""
-    code, out = run(["gh", "repo", "view", "--json", "autoMergeAllowed", "-q", ".autoMergeAllowed"], top, timeout=10)
+    """False only when GitHub says the repository turns auto-merge off; unknown counts as allowed.
+
+    The repository endpoint, not `gh repo view`: no `gh` release has an `autoMergeAllowed`
+    field there, so that lookup always failed and every repository read as allowed (#102).
+    """
+    code, out = run(["gh", "api", "repos/{owner}/{repo}", "-q", ".allow_auto_merge"], top, timeout=10)
     return not (code == 0 and out.strip() == "false")
 
 
@@ -770,7 +793,11 @@ def checkout_problems(top: Path, written: list[Path], local_only: bool = False, 
     else:
         where, fix = f"`{branch}`", "commit, checkpoint and push them"
     # `run` strips the output, so the first line may have lost its leading status column; split instead of slicing.
-    tracked = [line.split(None, 1)[-1] for line in (git(top, "status", "--porcelain", "--untracked-files=no") or "").splitlines() if line.strip()]
+    state = runtime_state(top)
+    tracked = [
+        path for line in (git(top, "status", "--porcelain", "--untracked-files=no") or "").splitlines()
+        if line.strip() and (path := line.split(None, 1)[-1]) not in state
+    ]
     if tracked:
         problems.append(f"{len(tracked)} uncommitted change(s) to tracked files on {where} ({names(tracked)}): {fix}.")
     mine = [str(p.resolve().relative_to(top.resolve())) for p in written if within(p, top)]

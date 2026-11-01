@@ -195,19 +195,15 @@ checks it in `gates`; a change that breaks one fails CI.
 |---|---|---|
 | Two identical workspace creates make one workspace (`slug` is unique), and at most one database is recorded for it, one that exists. | `WorkspaceProvisioning` | yes |
 | A provisioning request that loses the race leaves nothing behind. | `WorkspaceProvisioningOrphan` | **no**: its database and role stay |
-| A live file always has a good copy in R2 or Drive, through crashes, failed calls, bad Drive bytes and on-demand recall. | `FileLifecycleUnhashedRestore` | **no**: see below |
+| A live file always has a good copy in R2 or Drive, through crashes, failed calls, bad Drive bytes and on-demand recall. | `FileLifecycle` (`FileLifecycleNoHash` is the control) | yes, since #429 |
 | Once no job or recall is running, the file's state says where its bytes are. | `FileLifecycleOnDemandRace` | **no**: see below |
 | A revoked key starts no new request. | `KeyRevocation` | yes |
 | An API key (other than the owner's listed agent key) never passes confirmation; a session skips codes only inside the window after a pass. | `KeyRevocation` | yes |
 | No write lands after a key is revoked. | `KeyRevocationInFlight` | **no**: requests already past authentication finish |
 
 Where a property does not hold, the model pins today's behavior as an expected
-failure and a fixed variant shows what would make it hold:
+failure; where a fixed variant exists, it shows what would make it hold:
 
-- **Restore can overwrite good bytes.** When archive verification, or the state
-  update after it, fails, the Drive locator is saved without `archive_hash`. A
-  later restore cannot check the Drive copy and writes it over R2. Saving the
-  hash with the locator fixes it (`FileLifecycle` checks that variant).
 - **Archive can prune bytes a recall just restored.** The file ends `active_r2`
   with no R2 bytes. Drive still holds them; downloads fail until a restore job
   runs.

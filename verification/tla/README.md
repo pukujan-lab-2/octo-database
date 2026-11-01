@@ -22,16 +22,16 @@ checks its SHA-256 and runs the script inside the `gates` job.
 ## What each config expects
 
 Exit 0 means TLC found no violation. Exit 12 means an invariant fails, which is
-expected in five configs: four record behavior the code has today, and one is a
-control that shows the model can fail at all.
+expected in five configs: three record behavior the code has today, and two are
+controls that show the model can fail.
 
 | Config | Expect | Why |
 |---|---|---|
 | `WorkspaceProvisioning` | 0 | At most one database is recorded per workspace, and the recorded one exists. |
 | `WorkspaceProvisioningOrphan` | 12 | **Finding.** Two requests can both pass the check and both create a database. The loser's insert fails on the unique key and its database and role stay in the cluster. |
 | `WorkspaceProvisioningCleanup` | 0 | Dropping the database on a lost insert would fix it. |
-| `FileLifecycleUnhashedRestore` | 12 | **Finding.** When archive verification fails, or the state update after it fails, the Drive locator is saved but `archive_hash` is not. A restore of that file then has nothing to check the Drive copy against and writes it over the good R2 bytes. TLC reaches a file with no good copy in eleven states. |
-| `FileLifecycle` | 0 | With the hash saved wherever the locator is saved, no file loses its last good copy, with crashes, failed calls, bad Drive bytes and on-demand restores. |
+| `FileLifecycleNoHash` | 12 | Control: if a failed archive saved the Drive locator without `archive_hash`, as the code did before #429, a later restore could not check the Drive copy and would write it over the good R2 bytes. |
+| `FileLifecycle` | 0 | With the hash saved wherever the locator is saved (#429), no file loses its last good copy, with crashes, failed calls, bad Drive bytes and on-demand restores. |
 | `FileLifecycleJobsOnly` | 0 | With that fix and without on-demand restores, the state always says where the bytes are once nothing is running. |
 | `FileLifecycleOnDemandRace` | 12 | **Finding.** An archive job that loaded the file as archived can delete the R2 copy a download just restored, and the file ends `active_r2` with no R2 bytes. Drive still has them, so nothing is lost, but downloads fail until a restore job runs. |
 | `FileLifecycleNoVerify` | 12 | Control: if archive dropped R2 without verifying Drive, bytes would be lost. |

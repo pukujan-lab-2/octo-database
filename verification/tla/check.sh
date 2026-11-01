@@ -11,7 +11,7 @@ expectations=(
   "WorkspaceProvisioning WorkspaceProvisioning 0"
   "WorkspaceProvisioning WorkspaceProvisioningOrphan 12"   # finding: a losing request leaves its database
   "WorkspaceProvisioning WorkspaceProvisioningCleanup 0"
-  "FileLifecycle FileLifecycleUnhashedRestore 12"          # finding: restore overwrites good R2 with an unchecked Drive copy
+  "FileLifecycle FileLifecycleNoHash 12"                    # negative control: without the hash, restore overwrites good R2 bytes
   "FileLifecycle FileLifecycle 0"
   "FileLifecycle FileLifecycleJobsOnly 0"
   "FileLifecycle FileLifecycleOnDemandRace 12"             # finding: archive drops bytes a download just restored

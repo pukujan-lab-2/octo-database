@@ -24,7 +24,7 @@ EXTENDS Naturals, Sequences
 CONSTANTS
     OnDemand,      \* downloads restore on demand (TRUE in the code)
     VerifyFirst,   \* archive verifies the Drive copy before it may drop R2 (TRUE in the code)
-    HashWithLocator, \* every update that records a Drive locator also records archive_hash (FALSE in the code)
+    HashWithLocator, \* every update that records a Drive locator also records archive_hash (TRUE in the code, #429)
     MaxCrashes
 
 VARIABLES

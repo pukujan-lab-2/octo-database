@@ -184,7 +184,6 @@ These are true of `main` today. Each is a fact to plan around, not a decision. T
 - **Row-level security depends on configuration.** If `OCTO_DB_URL` and `OCTO_SERVICE_URL` are unset, both pools fall back to `DATABASE_URL`, a superuser, and RLS filters nothing (#111). Production sets both.
 - **`octo.graph_projections` has no tenant fence**, unlike the other tenant tables.
 - **Two concurrent database provisions for one workspace** can both pass the "already provisioned" check; the loser would leave an orphaned database and role.
-- **A restore can overwrite good R2 bytes.** If archive verification, or the state update after it, fails, the Drive locator is saved without `archive_hash`, so a later restore has nothing to check the Drive copy against.
 - **An archive job can prune bytes an on-demand recall just restored**, leaving the file `active_r2` with no R2 bytes until a restore job runs. Drive keeps its copy.
 - **A request already past authentication finishes after its key is revoked.** Revocation stops new requests only.
 - **Deleting a workspace leaves its files** in R2 and Drive and reports them as `orphanedObjects`. Deleting an archived file does not delete its Drive copy.

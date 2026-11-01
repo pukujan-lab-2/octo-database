@@ -11,6 +11,16 @@ services:
       OLLAMA_NUM_PARALLEL: "2"
     volumes:
       - octo-embed-models:/root/.ollama
+    # Stopped by Sablier after 30 idle minutes; the next embedding call starts it (#448).
+    labels:
+      sablier.enable: "true"
+      sablier.group: embed
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     cpus: 4
     mem_limit: 4g
     networks:
@@ -25,6 +35,30 @@ services:
   octo-api:
     cpus: 4
     mem_limit: 4g
+    # Through the web container's Sablier listeners, so a call starts a stopped
+    # Phoenix or embedder (#448). Overrides the values in .env.
+    environment:
+      - OCTO_PHOENIX_URL=http://octo-web:6006
+      - OCTO_EMBEDDING_BASE_URL=http://octo-web:11434/v1
+
+  # Sablier stops the containers labelled sablier.enable after their idle time and
+  # starts them when the web container's plugin asks (#448). A container started any
+  # other way (a deploy, a restart) gets the default 30 minutes before it stops.
+  sablier:
+    image: sablierapp/sablier:1.18.0
+    container_name: octo-sablier
+    restart: unless-stopped
+    command:
+      - start
+      - --provider.name=docker
+      - --provider.auto-stop-on-startup=false
+      - --provider.auto-warm-externally-started=true
+      - --sessions.default-duration=30m
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 128m
+    networks:
+      - octo-internal
 
   # Phoenix: the one trace viewer (#268, #342). Agents send traces to Octo, which
   # forwards them here into the workspace's project. Its data lives in its own
@@ -54,6 +88,17 @@ services:
       PHOENIX_ROOT_URL: ${OCTO_PHOENIX_PUBLIC_URL}
     ports:
       - "127.0.0.1:6006:6006"
+    # Stopped by Sablier after 30 idle minutes; /phoenix or the API's next trace call
+    # starts it (#448).
+    labels:
+      sablier.enable: "true"
+      sablier.group: phoenix
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6006/healthz')"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       octo-db:
         condition: service_healthy

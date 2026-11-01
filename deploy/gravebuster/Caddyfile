@@ -32,8 +32,19 @@
         forward_auth octo-api:3001 {
             uri /api/phoenix/auth
         }
-        reverse_proxy octo-phoenix:6006 {
-            header_up Authorization "Bearer {env.OCTO_PHOENIX_SECRET}"
+        # Phoenix stops when idle (#448); a request that passed the check above
+        # starts it and waits until it answers.
+        route {
+            sablier http://sablier:10000 {
+                group phoenix
+                session_duration 30m
+                blocking {
+                    timeout 2m
+                }
+            }
+            reverse_proxy octo-phoenix:6006 {
+                header_up Authorization "Bearer {env.OCTO_PHOENIX_SECRET}"
+            }
         }
     }
 
@@ -80,5 +91,35 @@
         header Cache-Control "no-cache"
         file_server
         try_files {path} /index.html
+    }
+}
+
+# The API's own calls to Phoenix and the embedder come through these two listeners
+# (OCTO_PHOENIX_URL and OCTO_EMBEDDING_BASE_URL in docker-compose.vps.yml), so a trace,
+# a trace read or an embedding starts a stopped service and waits for it. Sablier
+# stops each one after 30 idle minutes (#448). Not published on the host.
+:6006 {
+    route {
+        sablier http://sablier:10000 {
+            group phoenix
+            session_duration 30m
+            blocking {
+                timeout 2m
+            }
+        }
+        reverse_proxy octo-phoenix:6006
+    }
+}
+
+:11434 {
+    route {
+        sablier http://sablier:10000 {
+            group embed
+            session_duration 30m
+            blocking {
+                timeout 3m
+            }
+        }
+        reverse_proxy octo-embed:11434
     }
 }

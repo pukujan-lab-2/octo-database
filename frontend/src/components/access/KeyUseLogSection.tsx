@@ -22,7 +22,7 @@ const COLUMNS: DataColumn<KeyUseSummaryRow>[] = [
     filterValue: (row) => row.keyName ?? row.keyPrefix ?? "unknown key",
     searchValue: (row) => `${row.keyName ?? ""} ${row.keyPrefix ?? ""}`,
     cell: (row) => (
-      <div className="max-w-[220px] space-y-0.5">
+      <div className="max-w-[170px] space-y-0.5">
         <p className="truncate font-medium">{row.keyName ?? "Deleted key"}</p>
         <p className="num truncate text-[11px] text-muted-foreground">{row.keyPrefix ?? row.keyId.slice(0, 8)}</p>
       </div>
@@ -34,7 +34,7 @@ const COLUMNS: DataColumn<KeyUseSummaryRow>[] = [
     sortValue: (row) => row.sourceIp,
     filterValue: (row) => displayIp(row.sourceIp),
     cell: (row) => (
-      <p className="num max-w-[200px] truncate text-xs" title={row.sourceIp ?? undefined}>
+      <p className="num max-w-[140px] truncate text-xs" title={row.sourceIp ?? undefined}>
         {displayIp(row.sourceIp)}
       </p>
     ),
@@ -51,7 +51,7 @@ const COLUMNS: DataColumn<KeyUseSummaryRow>[] = [
     header: "Route",
     sortValue: (row) => row.route,
     cell: (row) => (
-      <p className="num max-w-[280px] truncate text-xs" title={row.route}>
+      <p className="num max-w-[210px] truncate text-xs" title={row.route}>
         {row.route}
       </p>
     ),

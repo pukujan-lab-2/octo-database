@@ -1,6 +1,6 @@
 # Current repository checkpoint
 
-<!-- continuity:current {"active_task":"OCTO-1000","active_task_file":"tasks/TASK-OCTO-1000-gravebuster-deployment.md","protocol_version":"0.1.0-draft","schema":"project-continuity.current.v1"} -->
+<!-- continuity:current {"active_task":null,"active_task_file":null,"protocol_version":"0.1.0-draft","schema":"project-continuity.current.v1"} -->
 
 Older state: [`history/2026-10.md`](history/2026-10.md) and earlier months in `history/`.
 

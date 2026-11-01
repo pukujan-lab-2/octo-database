@@ -69,3 +69,13 @@ export async function rerankScores(config: RerankConfig, query: string, document
   }
   return null;
 }
+
+/**
+ * Orders hybrid results by their rerank scores, highest first; equal scores keep
+ * the hybrid order. Only reorders: it never adds, drops or changes a result.
+ */
+export function applyRerankScores<T>(results: T[], scores: number[]): Array<T & { rerankScore: number }> {
+  return results
+    .map((result, i) => ({ ...result, rerankScore: scores[i]! }))
+    .sort((a, b) => b.rerankScore - a.rerankScore);
+}

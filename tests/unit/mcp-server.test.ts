@@ -11,7 +11,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import { OctoApi } from '../../src/mcp/client';
-import { createOctoMcpServer } from '../../src/mcp/server';
+import { createOctoMcpServer, restrictToCapabilities, TOOL_ACTIONS } from '../../src/mcp/server';
+import { OCTO_CAPABILITIES } from '../../src/api/capabilities';
 
 function apiWith(status: number, body: string, calls: string[] = []): OctoApi {
   const fetchImpl = (async (url: unknown) => {
@@ -45,10 +46,15 @@ describe('Octo MCP adapter', () => {
       'delete_document',
       'delete_file',
       'download_file',
+      'get_analytics_query_status',
+      'get_analytics_result',
       'get_document',
       'get_ops_summary',
       'graph_health',
+      'guide',
       'ingest_document',
+      'list_analytics_schedules',
+      'list_analytics_specs',
       'list_documents',
       'list_files',
       'list_ops_events',
@@ -58,12 +64,16 @@ describe('Octo MCP adapter', () => {
       'provision_database',
       'query_belief_as_of',
       'query_claims_as_of',
+      'query_dataset',
       'query_graph',
       'query_workspace',
       'query_workspace_database',
       'record_epistemic',
+      'register_analytics_spec',
+      'register_dataset',
       'rename_document',
       'retry_job',
+      'schedule_analytics',
       'upload_file',
       'whoami',
     ]);
@@ -216,6 +226,77 @@ describe('Octo MCP adapter', () => {
     expect(result.isError).toBeFalsy();
   });
 
+  it('registers a dataset through the datasets route', async () => {
+    const calls: string[] = [];
+    const client = await connect(apiWith(201, '{"datasetVersion":{"id":"v1"},"created":true}', calls));
+
+    const result = await client.callTool({
+      name: 'register_dataset',
+      arguments: {
+        workspaceId: 'w1',
+        dataset: 'job-history',
+        schema: [
+          { name: 'job_type', type: 'TEXT' },
+          { name: 'state', type: 'TEXT' },
+          { name: 'created_at', type: 'TIMESTAMP' },
+        ],
+        provenance: { source: 'octo.jobs', exportedAt: '2026-10-19T00:00:00Z' },
+        parts: [{ partition: '2026-01-31', dataBase64: 'UEFS' }],
+      },
+    });
+
+    expect(calls).toEqual(['http://octo.test/api/workspaces/w1/datasets']);
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('datasetVersion');
+  });
+
+  it('submits a named query and polls its job', async () => {
+    const calls: string[] = [];
+    const client = await connect(apiWith(201, '{"job":{"id":"j1"},"created":true}', calls));
+
+    await client.callTool({
+      name: 'query_dataset',
+      arguments: { workspaceId: 'w1', datasetVersionId: 'v1', querySpec: 'job-failures-by-type-month@1' },
+    });
+    await client.callTool({
+      name: 'get_analytics_query_status',
+      arguments: { workspaceId: 'w1', jobId: 'j1' },
+    });
+
+    expect(calls).toEqual([
+      'http://octo.test/api/workspaces/w1/analytics/queries',
+      'http://octo.test/api/workspaces/w1/analytics/queries/j1',
+    ]);
+  });
+
+  it('fetches a result artifact through the results route', async () => {
+    const calls: string[] = [];
+    const client = await connect(
+      apiWith(200, '{"result":{"id":"r1"},"downloadUrl":"/content","expiresInSeconds":0}', calls)
+    );
+
+    const result = await client.callTool({
+      name: 'get_analytics_result',
+      arguments: { workspaceId: 'w1', resultId: 'r1' },
+    });
+
+    expect(calls).toEqual(['http://octo.test/api/workspaces/w1/analytics/results/r1']);
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('downloadUrl');
+  });
+
+  it('reports an unconfigured analytics engine as a tool error, not a success', async () => {
+    const client = await connect(apiWith(503, '{"error":"ANALYTICS_NOT_CONFIGURED"}'));
+
+    const result = await client.callTool({
+      name: 'query_dataset',
+      arguments: { workspaceId: 'w1', datasetVersionId: 'v1', querySpec: 'job-failures-by-type-month@1' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('503');
+  });
+
   it('reports a read-only key refused a retry as a tool error, not a success', async () => {
     // retry_job is the one place an agent gains a repair action; a read-only key
     // must be refused by the server (write scope + admin role), and that refusal
@@ -344,5 +425,90 @@ describe('Octo MCP adapter', () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('403');
+  });
+});
+
+describe('Octo MCP tool surface', () => {
+  it('maps every action it names onto a real capability', () => {
+    const actions = new Set(OCTO_CAPABILITIES.map((capability) => capability.action));
+    for (const [tool, action] of Object.entries(TOOL_ACTIONS)) {
+      expect(actions.has(action), `${tool} -> ${action}`).toBe(true);
+    }
+  });
+
+  it('lists only the tools the key can use', async () => {
+    const granted = OCTO_CAPABILITIES.filter((c) => c.requiredScope === 'read').map((c) => ({ action: c.action }));
+    const api = apiWith(200, JSON.stringify({ capabilities: granted }));
+    const server = createOctoMcpServer(api);
+    const hidden = await restrictToCapabilities(server, api);
+    expect(hidden).toBeGreaterThan(0);
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'octo-test', version: '0.0.0' });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+
+    expect(names).toContain('list_workspaces');
+    expect(names).toContain('whoami');
+    expect(names).toContain('guide');
+    expect(names).not.toContain('delete_file');
+    expect(names).not.toContain('upload_file');
+    expect(names).not.toContain('create_workspace');
+  });
+
+  it('keeps every tool when the capability lookup fails', async () => {
+    const api = apiWith(500, 'nope');
+    const server = createOctoMcpServer(api);
+    expect(await restrictToCapabilities(server, api)).toBe(0);
+  });
+
+  it('answers guide with a topic list, then with a topic', async () => {
+    const client = await connect(apiWith(200, '{}'));
+    const list = JSON.parse(textOf(await client.callTool({ name: 'guide', arguments: {} })));
+    expect(list.topics).toEqual(expect.arrayContaining(['analytics', 'ledger']));
+    const one = JSON.parse(textOf(await client.callTool({ name: 'guide', arguments: { topic: 'analytics' } })));
+    expect(one.guide).toContain('ws:<slug>@<n>');
+  });
+
+  it('returns compact JSON', async () => {
+    const client = await connect(apiWith(200, '{"a":1}'));
+    expect(textOf(await client.callTool({ name: 'whoami', arguments: {} }))).toBe('{"a":1}');
+  });
+});
+
+describe('Octo MCP analytics tools', () => {
+  it('registers a spec and schedules it through the analytics routes', async () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    const fetchImpl = (async (url: unknown, init?: { method?: string; body?: string }) => {
+      calls.push({ url: String(url), method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : undefined });
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = await connect(new OctoApi({ baseUrl: 'http://octo.test', token: 'octo_live_acc_test', fetchImpl }));
+
+    await client.callTool({
+      name: 'register_analytics_spec',
+      arguments: { workspaceId: 'ws-1', slug: 'err', dataset: 'log', sql: 'SELECT 1 AS n', params: [] },
+    });
+    await client.callTool({
+      name: 'schedule_analytics',
+      arguments: {
+        workspaceId: 'ws-1',
+        spec: 'ws:err@1',
+        dataset: 'log',
+        everyMinutes: 60,
+        sink: { table: 'err_by_hour', mode: 'replace' },
+      },
+    });
+    await client.callTool({
+      name: 'query_dataset',
+      arguments: { workspaceId: 'ws-1', dataset: 'log', querySpec: 'ws:err@1', params: { since: '2026-01-01' } },
+    });
+
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      'POST http://octo.test/api/workspaces/ws-1/analytics/specs',
+      'POST http://octo.test/api/workspaces/ws-1/analytics/schedules',
+      'POST http://octo.test/api/workspaces/ws-1/analytics/queries',
+    ]);
+    expect(calls[2]!.body).toEqual({ dataset: 'log', querySpec: 'ws:err@1', params: { since: '2026-01-01' } });
   });
 });

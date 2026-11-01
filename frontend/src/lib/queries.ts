@@ -2,7 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 import type {
   ActivityRow,
+  AnalyticsRows,
+  AnalyticsRunSummary,
   ApiKey,
+  DatasetSummary,
   FileRecord,
   GalleryItem,
   Health,
@@ -19,6 +22,42 @@ export function useHealth() {
     queryKey: ["health"],
     staleTime: 5 * 60 * 1000,
     queryFn: () => api.get<Health>("/health", { authMode: "public" }),
+  });
+}
+
+export interface ServiceLink {
+  id: string;
+  label: string;
+  tool: string;
+  url: string | null;
+}
+
+export function useServices() {
+  return useQuery({
+    queryKey: ["services"],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => api.get<{ services: ServiceLink[] }>("/api/services"),
+  });
+}
+
+/** The workspace's own project in the hosted trace viewer (Phoenix). */
+export function useTraceLink(workspaceId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["trace-link", workspaceId],
+    enabled,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => api.get<{ project: string; url: string }>(`/api/workspaces/${workspaceId}/otel/link`),
+  });
+}
+
+export type UxAnalytics = { enabled: boolean; websiteId: string | null; tags: string | null };
+
+/** The workspace's UX analytics (Umami) website, if it is turned on. */
+export function useUxAnalytics(workspaceId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["ux-analytics", workspaceId],
+    enabled,
+    queryFn: () => api.get<UxAnalytics>(`/api/workspaces/${workspaceId}/ux-analytics`),
   });
 }
 
@@ -83,5 +122,37 @@ export function useOpsSummary(workspaceId: string) {
     queryKey: ["ops-summary", workspaceId],
     enabled: Boolean(workspaceId),
     queryFn: () => api.get<OpsSummary>(`/api/ops/summary${qs({ workspaceId })}`),
+  });
+}
+
+/** The workspace's registered lake datasets, newest version per dataset. */
+export function useDatasets(workspaceId: string) {
+  return useQuery({
+    queryKey: ["datasets", workspaceId],
+    enabled: Boolean(workspaceId),
+    queryFn: () =>
+      api.get<{ datasets: DatasetSummary[] }>(`/api/workspaces/${workspaceId}/datasets`),
+  });
+}
+
+/** Recent analytics_query jobs for the workspace, newest first. */
+export function useAnalyticsRuns(workspaceId: string) {
+  return useQuery({
+    queryKey: ["analytics-runs", workspaceId],
+    enabled: Boolean(workspaceId),
+    queryFn: () =>
+      api.get<{ runs: AnalyticsRunSummary[] }>(`/api/workspaces/${workspaceId}/analytics/runs`),
+  });
+}
+
+/** One completed result artifact, read back as JSON rows. */
+export function useAnalyticsRows(workspaceId: string, resultId: string | null) {
+  return useQuery({
+    queryKey: ["analytics-rows", workspaceId, resultId],
+    enabled: Boolean(workspaceId && resultId),
+    queryFn: () =>
+      api.get<AnalyticsRows>(
+        `/api/workspaces/${workspaceId}/analytics/results/${resultId}/rows`,
+      ),
   });
 }

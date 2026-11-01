@@ -5,11 +5,20 @@
 
 import { hasScope, OctoScope } from '../api/capabilities';
 import { hashApiKeySecret } from '../api/keys';
+import { sendPhoneAlert } from '../lib/phone-alert';
 import { oauthResource, verifyOAuthAccessToken } from '../lib/oauth-token';
 import { verifySessionToken } from '../lib/session-token';
 import { verifyMediaToken } from '../media/media-token';
 import { Principal, ROLE_HIERARCHY, WorkspaceRole } from '../types/auth';
-import { bindRequestIdentity, dbGetWorkspaceMembership, dbResolveShareById, dbVerifyApiKey, queryService } from './db';
+import {
+  bindRequestIdentity,
+  dbFindDeadApiKey,
+  dbGetWorkspaceMembership,
+  dbRecordKeyUse,
+  dbResolveShareById,
+  dbVerifyApiKey,
+  queryService,
+} from './db';
 import { sendJson } from './http';
 import { UUID_PATTERN } from './runtime';
 import { IncomingMessage, ServerResponse } from 'http';
@@ -25,6 +34,17 @@ export interface AuthContext {
     scopes: string[];
     isAccountWide: boolean;
   };
+  /** Set for an owner-listed agent key; the request is treated as the owner's session. */
+  ownerAgent?: boolean;
+}
+
+function ownerAgentKeyIds(): Set<string> {
+  return new Set(
+    (process.env['OCTO_OWNER_AGENT_KEYS'] ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+  );
 }
 
 export function keyWorkspaceMatches(auth: AuthContext, workspaceId: string): boolean {
@@ -46,6 +66,46 @@ export function roleAllows(auth: AuthContext, liveRole: string, minimum: Workspa
   return roleMeetsMinimum(effectiveWorkspaceRole(auth, liveRole), minimum);
 }
 
+/** The caller's address: Caddy's X-Forwarded-For (the real client behind Cloudflare), else the socket. */
+function sourceIp(req: IncomingMessage): string | null {
+  const forwarded = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim();
+  return forwarded || req.socket?.remoteAddress || null;
+}
+
+/**
+ * Logs one key presentation and alerts the phone on a revoked or expired key, or
+ * an established key used from a new IP (#362). Runs off the request path.
+ */
+function recordKeyUse(
+  req: IncomingMessage,
+  key: { keyId: string; prefix: string | null; principalId: string | null; name?: string },
+  outcome: 'ok' | 'revoked' | 'expired'
+): void {
+  const ip = sourceIp(req);
+  const route = (req.url ?? '').split('?')[0] || null;
+  void (async () => {
+    try {
+      const { newIp, firstAlertThisHour } = await dbRecordKeyUse(
+        key.keyId, key.principalId, ip, req.method ?? null, route, outcome
+      );
+      const label = `${key.prefix ?? 'unknown'}…${key.name ? ` (${key.name})` : ''}`;
+      if (outcome !== 'ok' && firstAlertThisHour) {
+        await sendPhoneAlert(
+          `Octo: ${outcome} API key used`,
+          `Key ${label} was presented from ${ip ?? 'unknown IP'} on ${req.method} ${route}. It was refused.`
+        );
+      } else if (newIp) {
+        await sendPhoneAlert(
+          'Octo: API key used from a new IP',
+          `Key ${label} was used from ${ip} on ${req.method} ${route}, an address it has not used before.`
+        );
+      }
+    } catch (err) {
+      console.error('key use log failed:', err instanceof Error ? err.message : err);
+    }
+  })();
+}
+
 // Helper: authenticate caller from Authorization header
 export async function authenticateRequest(req: IncomingMessage): Promise<AuthContext | null> {
   const authHeader = req.headers['authorization'];
@@ -58,7 +118,12 @@ export async function authenticateRequest(req: IncomingMessage): Promise<AuthCon
   if (token.startsWith('octo_live_')) {
     const keyHash = hashApiKeySecret(token);
     const verified = await dbVerifyApiKey(keyHash);
-    if (!verified) return null;
+    if (!verified) {
+      const dead = await dbFindDeadApiKey(keyHash).catch(() => null);
+      if (dead) recordKeyUse(req, dead, dead.outcome);
+      return null;
+    }
+    recordKeyUse(req, { ...verified, name: verified.keyName }, 'ok');
 
     // Resolve principal
     const rows = await queryService<{
@@ -90,6 +155,12 @@ export async function authenticateRequest(req: IncomingMessage): Promise<AuthCon
     };
 
     bindRequestIdentity(pRow.id, verified.workspaceId ?? null);
+
+    // An account-wide key the owner lists in OCTO_OWNER_AGENT_KEYS acts as its
+    // owner's signed-in session, so the owner's agents reach every feature.
+    if (verified.workspaceId === null && ownerAgentKeyIds().has(verified.keyId)) {
+      return { principal, ownerAgent: true };
+    }
 
     return {
       principal,

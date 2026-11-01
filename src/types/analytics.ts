@@ -1,0 +1,116 @@
+/** Shared analytics records (Slice 7). */
+
+export interface ColumnSpec {
+  name: string;
+  type: string;
+}
+
+/** One immutable dataset export, as the catalog and the API present it. */
+export interface DatasetVersionRecord {
+  id: string;
+  datasetId: string;
+  dataset: string;
+  version: number;
+  format: string;
+  schema: ColumnSpec[];
+  objectKeys: string[];
+  rowCount: number;
+  provenance: Record<string, unknown>;
+  watermark: string | null;
+  createdAt: string;
+}
+
+/** The derived result artifact of one analytics_query job. */
+export interface AnalyticsResultRecord {
+  id: string;
+  datasetVersionId: string;
+  querySpec: string;
+  objectKey: string;
+  rowCount: number;
+  contentHash: string;
+  engineVersion: string;
+  createdAt: string;
+}
+
+/** One logical dataset with its newest immutable version. */
+export interface DatasetSummary {
+  datasetId: string;
+  dataset: string;
+  name: string;
+  latestVersionId: string;
+  latestVersion: number;
+  versionCount: number;
+  rowCount: number;
+  partCount: number;
+  watermark: string | null;
+  createdAt: string;
+}
+
+/** One analytics_query job with its artifact, if it has one. */
+export interface AnalyticsRunSummary {
+  jobId: string;
+  state: string;
+  errorCode: string | null;
+  errorSummary: string | null;
+  datasetVersionId: string | null;
+  querySpec: string | null;
+  resultId: string | null;
+  rowCount: number | null;
+  contentHash: string | null;
+  engineVersion: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+/** Result artifact rows, normalized for JSON (the dashboard's read path). */
+export interface AnalyticsRows {
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  rowCount: number;
+  truncated: boolean;
+  /** DuckDB type name per column, in column order. */
+  columnTypes: string[];
+}
+
+/** Parameter types a workspace spec may declare; date and timestamp bind as text. */
+export type SpecParamType = 'text' | 'integer' | 'double' | 'boolean' | 'date' | 'timestamp';
+
+export interface SpecParam {
+  name: string;
+  type: SpecParamType;
+}
+
+/** One immutable version of a workspace-registered query spec. */
+export interface WorkspaceSpecRecord {
+  id: string;
+  slug: string;
+  version: number;
+  /** The id a query submits: `ws:<slug>@<version>`. */
+  specId: string;
+  sql: string;
+  params: SpecParam[];
+  createdAt: string;
+}
+
+/** Where a scheduled run writes its rows: `analytics.<table>` in the workspace database. */
+export interface AnalyticsSink {
+  table: string;
+  mode: 'replace' | 'upsert';
+  /** Key columns; required for `upsert`. */
+  keys: string[];
+}
+
+export interface AnalyticsScheduleRecord {
+  id: string;
+  spec: string;
+  dataset: string;
+  params: Record<string, string | number | boolean>;
+  everyMinutes: number;
+  sink: AnalyticsSink;
+  enabled: boolean;
+  lastDatasetVersionId: string | null;
+  nextRunAt: string;
+  createdBy: string | null;
+  workspaceId: string;
+  createdAt: string;
+}

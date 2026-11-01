@@ -1,11 +1,11 @@
 # OCTO-1000 Host Octo on gravebuster with a production branch and gated CI/CD
 
-<!-- continuity:task {"acceptance":["octodb.design-bakery.com serves the Octo UI over HTTPS","Google sign-in completes and lands on an authenticated dashboard","guest login still works","a merge to main does not deploy; a merge to production deploys within 5 minutes","a failing smoke test rolls back to the previous image automatically","gates runs on pull requests into both main and production","no secret is committed to the repository"],"depends_on":["OCTO-0100"],"goal":"Host Octo's frontend and backend as containers on gravebuster with a gated promotion path to production","id":"OCTO-1000","issue_url":"https://github.com/Pukujan/octo-database/issues/43","next_action":"Create pull request with auto-merge to main for deployment hardening fixes.","owner":"Pukujan; main agent coordinates implementation","priority":"P1","protocol_version":"0.1.0-draft","schema":"project-continuity.task.v1","status":"active","why":"Octo has no hosted instance and no delivery path from a merged commit to a running service."} -->
+<!-- continuity:task {"acceptance":["octodb.design-bakery.com serves the Octo UI over HTTPS","Google sign-in completes and lands on an authenticated dashboard","guest login still works","a merge to main does not deploy; a merge to production deploys within 5 minutes","a failing smoke test rolls back to the previous image automatically","gates runs on pull requests into both main and production","no secret is committed to the repository"],"depends_on":["OCTO-0100"],"goal":"Host Octo's frontend and backend as containers on gravebuster with a gated promotion path to production","id":"OCTO-1000","issue_url":"https://github.com/Pukujan-lab/octo-database/issues/43","next_action":"Create pull request with auto-merge to main for deployment hardening fixes.","owner":"Pukujan; main agent coordinates implementation","priority":"P1","protocol_version":"0.1.0-draft","schema":"project-continuity.task.v1","status":"active","why":"Octo has no hosted instance and no delivery path from a merged commit to a running service."} -->
 
 - Status: active
 - Priority: P1
 - Branch: `task/OCTO-1000-gravebuster-hosting`
-- GitHub issue: https://github.com/Pukujan/octo-database/issues/43
+- GitHub issue: https://github.com/Pukujan-lab/octo-database/issues/43
 - Design spec: `docs/superpowers/specs/2026-10-01-octo-gravebuster-deployment-design.md`
 
 ## Goal
@@ -142,4 +142,50 @@ Blocked/uncertain:
 Next:
 - Create pull request with auto-merge to main for deployment hardening fixes
 
+### 2026-11-01 01:46:45 UTC — claude-opus-5-5
 
+<!-- continuity:checkpoint {"agent":"claude-opus-5-5","blocked":[],"changed":["none"],"completed":["Since 2026-10-26: #339 analytics specs, #345/#348 MCP tool surface, #354 confirm window, #358 env-to-vault, #381/#383 rerank, #394 VPS compose overlay, #396 RAG access once per search, #397 halfvec 512, #401 Phoenix traces, #404 vault relay fix, #405 Umami per workspace, #407 and #411-#413 agent stack 1.0.1 to 1.0.4, #408 CLAUDE.md loads AGENTS.md, #337 phone dialogs and secret-storage CTA","Promoted main bcd9bfb to production via #406 (production 3d78888)"],"decisions":["Live app runs on the VPS (ssh vps, ~/apps/octo), Komodo stack octo; octo-deploy-on-push deploys when production moves. Hosting is decided in Pukujan-lab/server-management vps/PLAN.md. The MacBook Pro keeps on-demand AI jobs only."],"evidence":["VPS ~/apps/octo at 3d78888; octo-api and octo-web healthy after the deploy; https://octodb.design-bakery.com/health ok","Stack lock .coord/hotload.lock.json at agent-stack-train ad6d9d6 = certified 1.0.4"],"evidence_class":"observed","next_action":"Open feature issues: #400 Umami, #399 RAG graph step, #395 shared embed/rerank endpoints, #393 Retrieval/Deployments views, #391 filtered-search scan, #385 octo-graph volume; #410 rule enforcement for Claude sessions","protocol_version":"0.1.0-draft","schema":"project-continuity.checkpoint.v1","task_id":"OCTO-1000","timestamp":"2026-11-01T01:46:45Z"} -->
+<!-- continuity:checkpoint-operation {"payload_sha256":"a87f54ac6b856efeeacf06f0e8fa543945fa76e419de002461dc1ca4894579aa","request_id":"d2a094a9197b4fd8a31a841846b194de","schema":"project-continuity.checkpoint-operation.v1","task_id":"OCTO-1000"} -->
+
+Completed:
+- Since 2026-10-26: #339 analytics specs, #345/#348 MCP tool surface, #354 confirm window, #358 env-to-vault, #381/#383 rerank, #394 VPS compose overlay, #396 RAG access once per search, #397 halfvec 512, #401 Phoenix traces, #404 vault relay fix, #405 Umami per workspace, #407 and #411-#413 agent stack 1.0.1 to 1.0.4, #408 CLAUDE.md loads AGENTS.md, #337 phone dialogs and secret-storage CTA
+- Promoted main bcd9bfb to production via #406 (production 3d78888)
+
+Evidence:
+- VPS ~/apps/octo at 3d78888; octo-api and octo-web healthy after the deploy; https://octodb.design-bakery.com/health ok
+- Stack lock .coord/hotload.lock.json at agent-stack-train ad6d9d6 = certified 1.0.4
+
+Decisions:
+- Live app runs on the VPS (ssh vps, ~/apps/octo), Komodo stack octo; octo-deploy-on-push deploys when production moves. Hosting is decided in Pukujan-lab/server-management vps/PLAN.md. The MacBook Pro keeps on-demand AI jobs only.
+
+Changed:
+- none
+
+Blocked/uncertain:
+- none
+
+Next:
+- Open feature issues: #400 Umami, #399 RAG graph step, #395 shared embed/rerank endpoints, #393 Retrieval/Deployments views, #391 filtered-search scan, #385 octo-graph volume; #410 rule enforcement for Claude sessions
+
+### 2026-11-01 02:55:45 UTC — claude-opus-5-5
+
+<!-- continuity:checkpoint {"agent":"claude-opus-5-5","blocked":[],"changed":["none"],"completed":["#419 verification: #420 PROJECT/ARCHITECTURE rewrite, #421 generated isolation tests over every route and MCP tool (also fixed the shadowed schedule DELETE route), #423 RAG/rerank/graph metamorphic tests, #424 TLA+ models checked by TLC in gates, #425 PDD section 8 as the contract"],"decisions":["TLA+ findings are pinned as expected failures, not fixed: unhashed restore can overwrite good R2 bytes; archive can prune bytes an on-demand recall just restored; a lost provisioning race orphans a database; in-flight requests finish after key revoke"],"evidence":["PRs 420, 421, 423, 424 and 425 merged with gates green; gates run 41266674154 shows all ten TLC configs at their expected exit"],"evidence_class":"observed","next_action":"Owner to choose which TLA+ findings to fix (restore without archive_hash is the one that can lose bytes); open feature issues #400 #399 #395 #393 #391 #385 #410","protocol_version":"0.1.0-draft","schema":"project-continuity.checkpoint.v1","task_id":"OCTO-1000","timestamp":"2026-11-01T02:55:45Z"} -->
+<!-- continuity:checkpoint-operation {"payload_sha256":"364ab783c2200d3c32526f305c0b764c010415c7bc8cbcb4afb8a1c6f9e16d63","request_id":"34a1e3d5a45d41f8866f9366729bc303","schema":"project-continuity.checkpoint-operation.v1","task_id":"OCTO-1000"} -->
+
+Completed:
+- #419 verification: #420 PROJECT/ARCHITECTURE rewrite, #421 generated isolation tests over every route and MCP tool (also fixed the shadowed schedule DELETE route), #423 RAG/rerank/graph metamorphic tests, #424 TLA+ models checked by TLC in gates, #425 PDD section 8 as the contract
+
+Evidence:
+- PRs 420, 421, 423, 424 and 425 merged with gates green; gates run 41266674154 shows all ten TLC configs at their expected exit
+
+Decisions:
+- TLA+ findings are pinned as expected failures, not fixed: unhashed restore can overwrite good R2 bytes; archive can prune bytes an on-demand recall just restored; a lost provisioning race orphans a database; in-flight requests finish after key revoke
+
+Changed:
+- none
+
+Blocked/uncertain:
+- none
+
+Next:
+- Owner to choose which TLA+ findings to fix (restore without archive_hash is the one that can lose bytes); open feature issues #400 #399 #395 #393 #391 #385 #410

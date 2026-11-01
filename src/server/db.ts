@@ -10,6 +10,17 @@ import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { GraphProjectionRow, GraphProjectionRecord } from '../types/graph';
 export type { GraphProjectionRow, GraphProjectionRecord } from '../types/graph';
+import type { RegisterVersionInput, RegisterVersionResult } from '../analytics/registration';
+import type {
+  AnalyticsResultRecord,
+  AnalyticsScheduleRecord,
+  AnalyticsSink,
+  AnalyticsRunSummary,
+  DatasetSummary,
+  DatasetVersionRecord,
+  SpecParam,
+  WorkspaceSpecRecord,
+} from '../types/analytics';
 const { Pool } = pg;
 
 /**
@@ -786,6 +797,59 @@ export async function dbVerifyApiKey(keyHash: string): Promise<{
   return rows[0] ?? null;
 }
 
+/** Appends one key-use row; returns true when an established key shows up from an IP it has never used (#362). */
+export async function dbRecordKeyUse(
+  keyId: string,
+  principalId: string | null,
+  sourceIp: string | null,
+  method: string | null,
+  route: string | null,
+  outcome: 'ok' | 'revoked' | 'expired'
+): Promise<{ newIp: boolean; firstAlertThisHour: boolean }> {
+  // A key's IP baseline is what it used in the 7 days after its first logged use.
+  const rows = await queryService<{ newIp: boolean; firstAlertThisHour: boolean }>(
+    `WITH prior AS (
+       SELECT
+         (SELECT min(used_at) FROM octo.agent_key_uses WHERE key_id = $1 AND outcome = 'ok') AS first_use,
+         EXISTS (SELECT 1 FROM octo.agent_key_uses WHERE key_id = $1 AND source_ip = $3 AND outcome = 'ok') AS ip_seen,
+         EXISTS (SELECT 1 FROM octo.agent_key_uses WHERE key_id = $1 AND outcome = $6
+                   AND used_at > now() - interval '1 hour') AS alerted_recently
+     ), ins AS (
+       INSERT INTO octo.agent_key_uses (key_id, principal_id, source_ip, method, route, outcome)
+       VALUES ($1, $2, $3, $4, $5, $6)
+     )
+     SELECT ($6 = 'ok' AND $3::text IS NOT NULL AND first_use < now() - interval '7 days' AND NOT ip_seen) AS "newIp",
+            NOT alerted_recently AS "firstAlertThisHour"
+     FROM prior`,
+    [keyId, principalId, sourceIp, method, route, outcome]
+  );
+  return rows[0] ?? { newIp: false, firstAlertThisHour: false };
+}
+
+/** Looks up a key hash that no longer verifies: a revoked (deleted) or an expired key. */
+export async function dbFindDeadApiKey(keyHash: string): Promise<{
+  keyId: string;
+  prefix: string | null;
+  principalId: string | null;
+  outcome: 'revoked' | 'expired';
+} | null> {
+  const rows = await queryService<{
+    keyId: string;
+    prefix: string | null;
+    principalId: string | null;
+    outcome: 'revoked' | 'expired';
+  }>(
+    `SELECT id AS "keyId", prefix, principal_id AS "principalId", 'expired' AS outcome
+       FROM octo.api_keys WHERE key_hash = $1 AND expires_at <= now()
+     UNION ALL
+     SELECT key_id, prefix, principal_id, 'revoked'
+       FROM octo.revoked_api_keys WHERE key_hash = $1
+     LIMIT 1`,
+    [keyHash]
+  );
+  return rows[0] ?? null;
+}
+
 export async function dbListApiKeys(
   principalId: string,
   workspaceId?: string
@@ -1424,7 +1488,8 @@ export async function dbEnsureEmbeddingConfig(
   dimensions: number,
   chunker: string,
   chunkSize: number,
-  chunkOverlap: number
+  chunkOverlap: number,
+  run: typeof query = query
 ): Promise<string> {
   const sql = `
     INSERT INTO octo.embedding_configs
@@ -1434,12 +1499,12 @@ export async function dbEnsureEmbeddingConfig(
     DO NOTHING
     RETURNING id;
   `;
-  const inserted = await query<{ id: string }>(sql, [
+  const inserted = await run<{ id: string }>(sql, [
     workspaceId, model, modelVersion, dimensions, chunker, chunkSize, chunkOverlap,
   ]);
   if (inserted[0]) return inserted[0].id;
 
-  const existing = await query<{ id: string }>(
+  const existing = await run<{ id: string }>(
     `SELECT id FROM octo.embedding_configs
      WHERE workspace_id = $1 AND model = $2 AND model_version = $3
        AND chunker = $4 AND chunk_size = $5 AND chunk_overlap = $6`,
@@ -1451,6 +1516,9 @@ export async function dbEnsureEmbeddingConfig(
 /**
  * Registers an immutable document version. A repeat of the same content hash
  * returns the existing version instead of creating a duplicate.
+ *
+ * `fileId` links a version indexed from an uploaded file; `run` lets the queue
+ * worker, which has no caller identity, write through the service pool.
  */
 export async function dbUpsertDocumentVersion(
   workspaceId: string,
@@ -1459,7 +1527,9 @@ export async function dbUpsertDocumentVersion(
   mimeType: string,
   byteSize: number,
   extractedText: string,
-  createdBy: string
+  createdBy: string | null,
+  fileId: string | null = null,
+  run: typeof query = query
 ): Promise<{ versionId: string; documentId: string; created: boolean }> {
   const docSql = `
     INSERT INTO octo.documents (workspace_id, title, created_by)
@@ -1467,11 +1537,11 @@ export async function dbUpsertDocumentVersion(
     ON CONFLICT (workspace_id, title) DO NOTHING
     RETURNING id;
   `;
-  const docInserted = await query<{ id: string }>(docSql, [workspaceId, title, createdBy]);
+  const docInserted = await run<{ id: string }>(docSql, [workspaceId, title, createdBy]);
   let documentId = docInserted[0]?.id;
 
   if (!documentId) {
-    const found = await query<{ id: string }>(
+    const found = await run<{ id: string }>(
       'SELECT id FROM octo.documents WHERE workspace_id = $1 AND title = $2',
       [workspaceId, title]
     );
@@ -1481,24 +1551,24 @@ export async function dbUpsertDocumentVersion(
   const versionSql = `
     INSERT INTO octo.document_versions
       (document_id, workspace_id, version_number, content_hash, mime_type, byte_size,
-       extracted_text, extraction_status)
+       extracted_text, extraction_status, file_id)
     VALUES (
       $1, $2,
       COALESCE((SELECT MAX(version_number) + 1 FROM octo.document_versions WHERE document_id = $1), 1),
-      $3, $4, $5, $6, 'extracted'
+      $3, $4, $5, $6, 'extracted', $7
     )
     ON CONFLICT (document_id, content_hash) DO NOTHING
     RETURNING id;
   `;
-  const versionInserted = await query<{ id: string }>(versionSql, [
-    documentId, workspaceId, contentHash, mimeType, byteSize, extractedText,
+  const versionInserted = await run<{ id: string }>(versionSql, [
+    documentId, workspaceId, contentHash, mimeType, byteSize, extractedText, fileId,
   ]);
 
   if (versionInserted[0]) {
     return { versionId: versionInserted[0].id, documentId, created: true };
   }
 
-  const existing = await query<{ id: string }>(
+  const existing = await run<{ id: string }>(
     'SELECT id FROM octo.document_versions WHERE document_id = $1 AND content_hash = $2',
     [documentId, contentHash]
   );
@@ -1510,30 +1580,31 @@ export async function dbReplaceChunksAndEmbeddings(
   workspaceId: string,
   versionId: string,
   configId: string,
-  chunks: Array<{ chunkIndex: number; chunkKey: string; content: string; startOffset: number; endOffset: number; tokenEstimate: number }>,
-  vectors: number[][]
+  chunks: Array<{ chunkIndex: number; chunkKey: string; content: string; startOffset: number; endOffset: number; tokenEstimate: number; page?: number | null }>,
+  vectors: number[][],
+  run: typeof query = query
 ): Promise<number> {
   // Derived artifacts are rebuilt as a unit so a partial run cannot leave a
   // half-indexed version.
-  await query('DELETE FROM octo.embeddings WHERE workspace_id = $1 AND chunk_id IN (SELECT id FROM octo.chunks WHERE document_version_id = $2)', [workspaceId, versionId]);
-  await query('DELETE FROM octo.chunks WHERE document_version_id = $1', [versionId]);
+  await run('DELETE FROM octo.embeddings WHERE workspace_id = $1 AND chunk_id IN (SELECT id FROM octo.chunks WHERE document_version_id = $2)', [workspaceId, versionId]);
+  await run('DELETE FROM octo.chunks WHERE document_version_id = $1', [versionId]);
 
   for (let i = 0; i < chunks.length; i += 1) {
     const chunk = chunks[i]!;
-    const inserted = await query<{ id: string }>(
+    const inserted = await run<{ id: string }>(
       `INSERT INTO octo.chunks
          (workspace_id, document_version_id, config_id, chunk_index, chunk_key, content,
-          start_offset, end_offset, token_estimate)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          start_offset, end_offset, token_estimate, page)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
       [workspaceId, versionId, configId, chunk.chunkIndex, chunk.chunkKey, chunk.content,
-       chunk.startOffset, chunk.endOffset, chunk.tokenEstimate]
+       chunk.startOffset, chunk.endOffset, chunk.tokenEstimate, chunk.page ?? null]
     );
     const chunkId = inserted[0]!.id;
     const vectorLiteral = `[${(vectors[i] ?? []).join(',')}]`;
-    await query(
+    await run(
       `INSERT INTO octo.embeddings (workspace_id, chunk_id, config_id, embedding)
-       VALUES ($1, $2, $3, $4::vector)`,
+       VALUES ($1, $2, $3, $4::halfvec)`,
       [workspaceId, chunkId, configId, vectorLiteral]
     );
   }
@@ -1541,19 +1612,29 @@ export async function dbReplaceChunksAndEmbeddings(
   return chunks.length;
 }
 
-/** Workspace-scoped semantic retrieval. The filter is applied in SQL. */
-export async function dbMatchChunks(
+/**
+ * Workspace-scoped hybrid retrieval: lexical and vector arms fused with RRF. The
+ * optional filter is applied inside both arms, before their limits (issue #364).
+ */
+export async function dbMatchChunksHybrid(
   workspaceId: string,
+  queryText: string,
   queryVector: number[],
   matchCount = 10,
-  minSimilarity = 0
+  filter: { documentIds?: string[]; titlePrefix?: string; latestVersionOnly?: boolean } = {}
 ): Promise<
   Array<{
     chunkId: string;
     documentVersionId: string;
+    documentId: string;
+    title: string;
+    versionNumber: number;
+    page: number | null;
     content: string;
     chunkIndex: number;
-    similarity: number;
+    similarity: number | null;
+    lexicalScore: number | null;
+    score: number;
     model: string;
     modelVersion: string;
     chunker: string;
@@ -1561,10 +1642,20 @@ export async function dbMatchChunks(
 > {
   const literal = `[${queryVector.join(',')}]`;
   return query(
-    `SELECT chunk_id AS "chunkId", document_version_id AS "documentVersionId", content,
-            chunk_index AS "chunkIndex", similarity, model, model_version AS "modelVersion", chunker
-     FROM octo.match_chunks($1, $2::vector, $3, $4)`,
-    [workspaceId, literal, matchCount, minSimilarity]
+    `SELECT chunk_id AS "chunkId", document_version_id AS "documentVersionId",
+            document_id AS "documentId", title, version_number AS "versionNumber", page,
+            content, chunk_index AS "chunkIndex", similarity, lexical_score AS "lexicalScore",
+            score, model, model_version AS "modelVersion", chunker
+     FROM octo.match_chunks_hybrid($1, $2::halfvec, $3, $4, $5::uuid[], $6, $7)`,
+    [
+      workspaceId,
+      literal,
+      queryText,
+      matchCount,
+      filter.documentIds && filter.documentIds.length > 0 ? filter.documentIds : null,
+      filter.titlePrefix ? filter.titlePrefix : null,
+      filter.latestVersionOnly === true,
+    ]
   );
 }
 
@@ -2218,6 +2309,40 @@ export async function dbGetWorkspaceById(workspaceId: string): Promise<{
   return rows[0] ?? null;
 }
 
+/** The workspace's Umami team and website (#400), or nulls when UX analytics is off. */
+export async function dbGetWorkspaceUmami(
+  workspaceId: string
+): Promise<{ teamId: string | null; websiteId: string | null } | null> {
+  const rows = await queryService<{ teamId: string | null; websiteId: string | null }>(
+    `SELECT umami_team_id AS "teamId", umami_website_id AS "websiteId" FROM octo.workspaces WHERE id = $1`,
+    [workspaceId]
+  );
+  return rows[0] ?? null;
+}
+
+/** Stores the Umami ids once; returns false when the workspace already has a website. */
+export async function dbSetWorkspaceUmami(workspaceId: string, teamId: string, websiteId: string): Promise<boolean> {
+  const rows = await queryService<{ id: string }>(
+    `UPDATE octo.workspaces SET umami_team_id = $2, umami_website_id = $3
+     WHERE id = $1 AND umami_website_id IS NULL RETURNING id`,
+    [workspaceId, teamId, websiteId]
+  );
+  return rows.length > 0;
+}
+
+/** Members with their emails, for adding them to the workspace's Umami team. */
+export async function dbListWorkspaceMemberEmails(
+  workspaceId: string
+): Promise<{ principalId: string; email: string; role: string }[]> {
+  return queryService(
+    `SELECT m.principal_id AS "principalId", p.email, m.role
+     FROM octo.workspace_memberships m JOIN octo.principals p ON p.id = m.principal_id
+     WHERE m.workspace_id = $1 AND p.email <> ''
+     ORDER BY m.created_at`,
+    [workspaceId]
+  );
+}
+
 /** Thrown by dbCreateWorkspaceAtomic when the Slice 16 rolling-day quota is spent. */
 export const WORKSPACE_DAILY_LIMIT = 'WORKSPACE_DAILY_LIMIT';
 
@@ -2513,18 +2638,6 @@ export async function dbClearMfa(principalId: string): Promise<void> {
   );
 }
 
-/** The id of a principal's account-wide key, or null. Enforces the one-key rule. */
-export async function dbGetAccountWideKeyId(principalId: string): Promise<string | null> {
-  // An account-wide key has workspace_id NULL by definition, so a scoped key's fence
-  // would hide it. This is a pre-mint existence check for the one-key rule, not tenant
-  // data; it reads the caller's own key row on the trusted path.
-  const rows = await queryService<{ id: string }>(
-    'SELECT id FROM octo.api_keys WHERE principal_id = $1 AND workspace_id IS NULL LIMIT 1',
-    [principalId]
-  );
-  return rows[0]?.id ?? null;
-}
-
 /** Workspaces that have a retention window set, for the archive sweep. */
 export async function dbListRetentionWorkspaces(): Promise<{ id: string; retentionDays: number }[]> {
   return queryService<{ id: string; retentionDays: number }>(
@@ -2573,6 +2686,7 @@ export interface VaultItemRow {
   label: string;
   description: string;
   kind: 'login' | 'token' | 'url' | 'note';
+  kindSource: 'explicit' | 'inferred';
   username: string | null;
   url: string | null;
   urlKind: string | null;
@@ -2605,6 +2719,7 @@ const VAULT_ITEM_COLUMNS = `
   label,
   description,
   kind,
+  kind_source AS "kindSource",
   username,
   url,
   url_kind AS "urlKind",
@@ -2645,6 +2760,7 @@ export async function dbInsertVaultItem(input: {
   label: string;
   description: string;
   kind: string;
+  kindSource?: 'explicit' | 'inferred';
   username: string | null;
   url: string | null;
   urlKind: string | null;
@@ -2653,8 +2769,8 @@ export async function dbInsertVaultItem(input: {
 }): Promise<void> {
   await query(
     `INSERT INTO octo.vault_items (
-       id, principal_id, workspace_id, label, description, kind, username, url, url_kind, secret_encrypted, notes_encrypted
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+       id, principal_id, workspace_id, label, description, kind, kind_source, username, url, url_kind, secret_encrypted, notes_encrypted
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       input.id,
       input.principalId,
@@ -2662,6 +2778,7 @@ export async function dbInsertVaultItem(input: {
       input.label,
       input.description,
       input.kind,
+      input.kindSource ?? 'explicit',
       input.username,
       input.url,
       input.urlKind,
@@ -2678,6 +2795,7 @@ export async function dbInsertVaultItemsBulk(
     label: string;
     description: string;
     kind: string;
+    kindSource?: 'explicit' | 'inferred';
     username: string | null;
     url: string | null;
     urlKind: string | null;
@@ -2689,8 +2807,8 @@ export async function dbInsertVaultItemsBulk(
     for (const item of items) {
       await client.query(
         `INSERT INTO octo.vault_items (
-           id, principal_id, workspace_id, label, description, kind, username, url, url_kind, secret_encrypted, notes_encrypted
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+           id, principal_id, workspace_id, label, description, kind, kind_source, username, url, url_kind, secret_encrypted, notes_encrypted
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           randomUUID(),
           principalId,
@@ -2698,6 +2816,7 @@ export async function dbInsertVaultItemsBulk(
           item.label,
           item.description,
           item.kind,
+          item.kindSource ?? 'explicit',
           item.username,
           item.url,
           item.urlKind,
@@ -2709,12 +2828,73 @@ export async function dbInsertVaultItemsBulk(
   });
 }
 
+/** Rewrites the editable fields of one item. A replaced secret resets the
+ *  health reading, since the old probe result described a different value. */
+export async function dbUpdateVaultItem(input: {
+  principalId: string;
+  itemId: string;
+  label: string;
+  description: string;
+  kind: string;
+  kindSource: 'explicit' | 'inferred';
+  username: string | null;
+  url: string | null;
+  urlKind: string | null;
+  secretEncrypted: string | null;
+  notesEncrypted: string | null;
+  secretReplaced: boolean;
+}): Promise<boolean> {
+  const rows = await query<{ id: string }>(
+    `UPDATE octo.vault_items
+     SET label = $3,
+         description = $4,
+         kind = $5,
+         kind_source = $6,
+         username = $7,
+         url = $8,
+         url_kind = $9,
+         secret_encrypted = $10,
+         notes_encrypted = $11,
+         health_status = CASE WHEN $12 THEN 'unchecked' ELSE health_status END,
+         health_detail = CASE WHEN $12 THEN NULL ELSE health_detail END,
+         last_health_at = CASE WHEN $12 THEN NULL ELSE last_health_at END,
+         stale_since = CASE WHEN $12 THEN NULL ELSE stale_since END,
+         updated_at = now()
+     WHERE principal_id = $1 AND id = $2
+     RETURNING id`,
+    [
+      input.principalId,
+      input.itemId,
+      input.label,
+      input.description,
+      input.kind,
+      input.kindSource,
+      input.username,
+      input.url,
+      input.urlKind,
+      input.secretEncrypted,
+      input.notesEncrypted,
+      input.secretReplaced,
+    ]
+  );
+  return rows.length > 0;
+}
+
 export async function dbDeleteVaultItem(principalId: string, itemId: string): Promise<boolean> {
   const rows = await query<{ id: string }>(
     'DELETE FROM octo.vault_items WHERE principal_id = $1 AND id = $2 RETURNING id',
     [principalId, itemId]
   );
   return rows.length > 0;
+}
+
+/** Deletes the ids this principal owns and reports how many rows went. */
+export async function dbDeleteVaultItems(principalId: string, itemIds: string[]): Promise<number> {
+  const rows = await query<{ id: string }>(
+    'DELETE FROM octo.vault_items WHERE principal_id = $1 AND id = ANY($2::uuid[]) RETURNING id',
+    [principalId, itemIds]
+  );
+  return rows.length;
 }
 
 export async function dbUpdateVaultHealth(
@@ -2798,9 +2978,10 @@ export async function dbInsertVaultGrant(input: {
 }
 
 /**
- * Inserts a decoy grant minted by an agent. The agent has no session, so this
- * uses the service pool and copies the cabinet from the parent grant. The
- * caller has already verified that parent.
+ * Inserts a narrowed grant minted by an agent. The agent has no session, so
+ * this uses the service pool and copies the cabinet from the parent grant. The
+ * caller has already verified that parent. The `decoy` column now only means
+ * "cannot mint a working key"; the inventory it reads is identical.
  */
 export async function dbInsertVaultGrantService(input: {
   id: string;
@@ -2975,6 +3156,43 @@ export async function dbInsertVaultRoute(input: {
   );
 }
 
+/**
+ * Derives a route from an item's own url. The caller is a grant with no
+ * session, so RLS would refuse the insert on the app pool.
+ */
+export async function dbInsertVaultRouteService(input: {
+  id: string;
+  principalId: string;
+  itemId: string;
+  routeKey: string;
+  name: string;
+  baseUrl: string;
+  authScheme?: string;
+  authHeader?: string | null;
+  bodyField?: string | null;
+  basicUsername?: string | null;
+}): Promise<void> {
+  await queryService(
+    `INSERT INTO octo.vault_routes (
+       id, principal_id, item_id, route_key, name, base_url,
+       auth_scheme, auth_header, body_field, basic_username
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (route_key) DO NOTHING`,
+    [
+      input.id,
+      input.principalId,
+      input.itemId,
+      input.routeKey,
+      input.name,
+      input.baseUrl,
+      input.authScheme ?? 'bearer',
+      input.authHeader ?? null,
+      input.bodyField ?? null,
+      input.basicUsername ?? null,
+    ]
+  );
+}
+
 export async function dbDeleteVaultRoute(principalId: string, itemId: string, routeId: string): Promise<boolean> {
   const rows = await query<{ id: string }>(
     'DELETE FROM octo.vault_routes WHERE principal_id = $1 AND item_id = $2 AND id = $3 RETURNING id',
@@ -3081,8 +3299,8 @@ export async function dbRevokeVaultLease(principalId: string, leaseId: string): 
 
 /**
  * Mints a lease for a grant. The agent has no session, so this runs on the
- * service pool. An active lease for the same (grant, item) is rotated out in
- * the same transaction, which the partial unique index also enforces.
+ * service pool. Other live leases for the same (grant, item) stay valid, so
+ * each consumer can hold its own key.
  */
 export async function dbInsertVaultLeaseService(input: {
   id: string;
@@ -3093,30 +3311,33 @@ export async function dbInsertVaultLeaseService(input: {
   prefix: string;
   name: string;
   expiresAt: string;
+  baseUrl: string | null;
+  authScheme: string;
+  authHeader: string | null;
+  bodyField: string | null;
+  basicUsername: string | null;
 }): Promise<void> {
-  await withTransaction(async (client) => {
-    await client.query(
-      `UPDATE octo.vault_leases
-       SET revoked_at = now()
-       WHERE parent_grant_id = $1 AND item_id = $2 AND revoked_at IS NULL`,
-      [input.parentGrantId, input.itemId]
-    );
-    await client.query(
-      `INSERT INTO octo.vault_leases (
-         id, principal_id, item_id, parent_grant_id, key_hash, prefix, name, expires_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        input.id,
-        input.principalId,
-        input.itemId,
-        input.parentGrantId,
-        input.keyHash,
-        input.prefix,
-        input.name,
-        input.expiresAt,
-      ]
-    );
-  }, servicePool);
+  await queryService(
+    `INSERT INTO octo.vault_leases (
+       id, principal_id, item_id, parent_grant_id, key_hash, prefix, name, expires_at,
+       base_url, auth_scheme, auth_header, body_field, basic_username
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    [
+      input.id,
+      input.principalId,
+      input.itemId,
+      input.parentGrantId,
+      input.keyHash,
+      input.prefix,
+      input.name,
+      input.expiresAt,
+      input.baseUrl,
+      input.authScheme,
+      input.authHeader,
+      input.bodyField,
+      input.basicUsername,
+    ]
+  );
 }
 
 /** Extends a live lease. Returns the new expiry, or null when it is gone. */
@@ -3186,3 +3407,555 @@ export async function dbConsumeVaultLease(keyHash: string, routeKey: string): Pr
   );
   return rows[0] ?? null;
 }
+
+export interface ConsumedVaultLeaseAny {
+  leaseId: string;
+  principalId: string;
+  itemId: string;
+  baseUrl: string | null;
+  authScheme: string;
+  authHeader: string | null;
+  bodyField: string | null;
+  basicUsername: string | null;
+  itemUsername: string | null;
+  secretEncrypted: string | null;
+  expiresAt: string;
+}
+
+/** Resolves a working key for the free-form proxy, with no route required. */
+export async function dbConsumeVaultLeaseByKey(keyHash: string): Promise<ConsumedVaultLeaseAny | null> {
+  const rows = await queryService<ConsumedVaultLeaseAny>(
+    `SELECT lease_id AS "leaseId",
+            principal_id AS "principalId",
+            item_id AS "itemId",
+            base_url AS "baseUrl",
+            auth_scheme AS "authScheme",
+            auth_header AS "authHeader",
+            body_field AS "bodyField",
+            basic_username AS "basicUsername",
+            item_username AS "itemUsername",
+            secret_encrypted AS "secretEncrypted",
+            expires_at AS "expiresAt"
+     FROM octo.consume_vault_lease_by_key($1)`,
+    [keyHash]
+  );
+  return rows[0] ?? null;
+}
+
+// 6. Analytics catalog (Slice 7)
+//
+// The catalog is written and read by the trusted route/worker surface only, so
+// every helper here uses the service pool. The app pool is RLS-fenced and the
+// migration grants no DML to it.
+
+const DATASET_VERSION_COLUMNS = `
+  v.id, v.dataset_id AS "datasetId", d.slug AS dataset, v.version, v.format,
+  v.schema, v.object_keys AS "objectKeys",
+  v.row_count::double precision AS "rowCount", v.provenance, v.watermark,
+  v.created_at AS "createdAt"
+`;
+
+const ANALYTICS_RESULT_COLUMNS = `
+  id, dataset_version_id AS "datasetVersionId", query_spec AS "querySpec",
+  object_key AS "objectKey", row_count::double precision AS "rowCount",
+  content_hash AS "contentHash", engine_version AS "engineVersion",
+  created_at AS "createdAt"
+`;
+
+function isoInstant(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function toDatasetVersionRecord(row: Record<string, unknown>): DatasetVersionRecord {
+  return {
+    id: String(row['id']),
+    datasetId: String(row['datasetId']),
+    dataset: String(row['dataset']),
+    version: Number(row['version']),
+    format: String(row['format']),
+    schema: (row['schema'] ?? []) as DatasetVersionRecord['schema'],
+    objectKeys: (row['objectKeys'] ?? []) as string[],
+    rowCount: Number(row['rowCount'] ?? 0),
+    provenance: (row['provenance'] ?? {}) as Record<string, unknown>,
+    watermark:
+      row['watermark'] === null || row['watermark'] === undefined ? null : String(row['watermark']),
+    createdAt: isoInstant(row['createdAt']),
+  };
+}
+
+function toAnalyticsResultRecord(row: Record<string, unknown>): AnalyticsResultRecord {
+  return {
+    id: String(row['id']),
+    datasetVersionId: String(row['datasetVersionId']),
+    querySpec: String(row['querySpec']),
+    objectKey: String(row['objectKey']),
+    rowCount: Number(row['rowCount'] ?? 0),
+    contentHash: String(row['contentHash']),
+    engineVersion: String(row['engineVersion']),
+    createdAt: isoInstant(row['createdAt']),
+  };
+}
+
+/**
+ * Assigns the next version for a logical dataset, writes the caller's objects,
+ * and inserts the immutable version row in one transaction. The dataset row is
+ * locked, so two concurrent registrations of the same slug serialize instead of
+ * colliding on the version number.
+ */
+export async function dbRegisterDatasetVersion(
+  input: RegisterVersionInput
+): Promise<RegisterVersionResult> {
+  try {
+    return await withTransaction(async (tx) => {
+      let dataset = (
+        await tx.query(
+          'SELECT id FROM octo.datasets WHERE workspace_id = $1 AND slug = $2 FOR UPDATE',
+          [input.workspaceId, input.slug]
+        )
+      ).rows[0] as { id: string } | undefined;
+
+      if (!dataset) {
+        const inserted = await tx.query(
+          `INSERT INTO octo.datasets (workspace_id, slug, name, created_by)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (workspace_id, slug) DO NOTHING
+           RETURNING id`,
+          [input.workspaceId, input.slug, input.name, input.createdBy]
+        );
+        dataset = inserted.rows[0] as { id: string } | undefined;
+        if (!dataset) {
+          dataset = (
+            await tx.query(
+              'SELECT id FROM octo.datasets WHERE workspace_id = $1 AND slug = $2 FOR UPDATE',
+              [input.workspaceId, input.slug]
+            )
+          ).rows[0] as { id: string } | undefined;
+        }
+      }
+      if (!dataset) throw new Error('DATASET_INSERT_FAILED');
+
+      if (input.idempotencyKey) {
+        const existing = await tx.query(
+          `SELECT ${DATASET_VERSION_COLUMNS}
+           FROM octo.dataset_versions v
+           JOIN octo.datasets d ON d.id = v.dataset_id
+           WHERE v.dataset_id = $1 AND v.idempotency_key = $2`,
+          [dataset.id, input.idempotencyKey]
+        );
+        if (existing.rows[0]) {
+          return {
+            status: 'existing' as const,
+            version: toDatasetVersionRecord(existing.rows[0] as Record<string, unknown>),
+          };
+        }
+      }
+
+      const next = (
+        await tx.query(
+          'SELECT COALESCE(max(version), 0) + 1 AS version FROM octo.dataset_versions WHERE dataset_id = $1',
+          [dataset.id]
+        )
+      ).rows[0] as { version: number };
+      const version = Number(next.version);
+
+      if (input.append && version !== input.append.baseVersion + 1) {
+        return { status: 'conflict' as const };
+      }
+
+      const newKeys = input.buildObjectKeys(version);
+      await input.writeObjects(newKeys);
+      const objectKeys = input.append ? [...input.append.carryKeys, ...newKeys] : newKeys;
+
+      const inserted = await tx.query(
+        `INSERT INTO octo.dataset_versions
+           (workspace_id, dataset_id, version, format, schema, provenance, watermark,
+            row_count, object_keys, idempotency_key, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING id`,
+        [
+          input.workspaceId,
+          dataset.id,
+          version,
+          input.format,
+          JSON.stringify(input.schema),
+          JSON.stringify(input.provenance),
+          input.watermark,
+          input.rowCount,
+          objectKeys,
+          input.idempotencyKey,
+          input.createdBy,
+        ]
+      );
+
+      const row = (
+        await tx.query(
+          `SELECT ${DATASET_VERSION_COLUMNS}
+           FROM octo.dataset_versions v
+           JOIN octo.datasets d ON d.id = v.dataset_id
+           WHERE v.id = $1`,
+          [(inserted.rows[0] as { id: string }).id]
+        )
+      ).rows[0] as Record<string, unknown>;
+
+      return { status: 'created' as const, version: toDatasetVersionRecord(row) };
+    }, servicePool);
+  } catch (error) {
+    if ((error as { code?: string }).code === '23505') return { status: 'conflict' };
+    throw error;
+  }
+}
+
+export async function dbGetDatasetVersion(
+  workspaceId: string,
+  datasetVersionId: string
+): Promise<DatasetVersionRecord | null> {
+  const rows = await queryService<Record<string, unknown>>(
+    `SELECT ${DATASET_VERSION_COLUMNS}
+     FROM octo.dataset_versions v
+     JOIN octo.datasets d ON d.id = v.dataset_id
+     WHERE v.workspace_id = $1 AND v.id = $2`,
+    [workspaceId, datasetVersionId]
+  );
+  return rows[0] ? toDatasetVersionRecord(rows[0]) : null;
+}
+
+/** The newest version of a workspace's dataset, by slug. */
+export async function dbGetLatestDatasetVersion(
+  workspaceId: string,
+  datasetSlug: string
+): Promise<DatasetVersionRecord | null> {
+  const rows = await queryService<Record<string, unknown>>(
+    `SELECT ${DATASET_VERSION_COLUMNS}
+     FROM octo.dataset_versions v
+     JOIN octo.datasets d ON d.id = v.dataset_id
+     WHERE v.workspace_id = $1 AND d.slug = $2
+     ORDER BY v.version DESC
+     LIMIT 1`,
+    [workspaceId, datasetSlug]
+  );
+  return rows[0] ? toDatasetVersionRecord(rows[0]) : null;
+}
+
+const WORKSPACE_SPEC_COLUMNS = 'id, slug, version, sql, params, created_at AS "createdAt"';
+
+function toWorkspaceSpecRecord(row: Record<string, unknown>): WorkspaceSpecRecord {
+  const slug = String(row['slug']);
+  const version = Number(row['version']);
+  return {
+    id: String(row['id']),
+    slug,
+    version,
+    specId: `ws:${slug}@${version}`,
+    sql: String(row['sql']),
+    params: (row['params'] ?? []) as SpecParam[],
+    createdAt: isoInstant(row['createdAt']),
+  };
+}
+
+/** Stores the next immutable version of a workspace spec. */
+export async function dbCreateWorkspaceSpec(input: {
+  workspaceId: string;
+  createdBy: string;
+  slug: string;
+  sql: string;
+  params: SpecParam[];
+}): Promise<WorkspaceSpecRecord | null> {
+  try {
+    const rows = await queryService<Record<string, unknown>>(
+      `INSERT INTO octo.analytics_specs (workspace_id, slug, version, sql, params, created_by)
+       SELECT $1, $2, COALESCE(max(version), 0) + 1, $3, $4, $5
+       FROM octo.analytics_specs WHERE workspace_id = $1 AND slug = $2
+       RETURNING ${WORKSPACE_SPEC_COLUMNS}`,
+      [input.workspaceId, input.slug, input.sql, JSON.stringify(input.params), input.createdBy]
+    );
+    return rows[0] ? toWorkspaceSpecRecord(rows[0]) : null;
+  } catch (error) {
+    // A concurrent writer took the same version number.
+    if ((error as { code?: string }).code === '23505') return null;
+    throw error;
+  }
+}
+
+export async function dbGetWorkspaceSpec(
+  workspaceId: string,
+  slug: string,
+  version: number
+): Promise<WorkspaceSpecRecord | null> {
+  const rows = await queryService<Record<string, unknown>>(
+    `SELECT ${WORKSPACE_SPEC_COLUMNS} FROM octo.analytics_specs
+     WHERE workspace_id = $1 AND slug = $2 AND version = $3`,
+    [workspaceId, slug, version]
+  );
+  return rows[0] ? toWorkspaceSpecRecord(rows[0]) : null;
+}
+
+export async function dbListWorkspaceSpecs(workspaceId: string): Promise<WorkspaceSpecRecord[]> {
+  const rows = await queryService<Record<string, unknown>>(
+    `SELECT ${WORKSPACE_SPEC_COLUMNS} FROM octo.analytics_specs
+     WHERE workspace_id = $1 ORDER BY slug, version DESC`,
+    [workspaceId]
+  );
+  return rows.map(toWorkspaceSpecRecord);
+}
+
+const SCHEDULE_COLUMNS = `id, workspace_id AS "workspaceId", spec, dataset, params,
+  every_minutes AS "everyMinutes", sink, enabled,
+  last_dataset_version_id AS "lastDatasetVersionId", next_run_at AS "nextRunAt",
+  created_by AS "createdBy", created_at AS "createdAt"`;
+
+function toScheduleRecord(row: Record<string, unknown>): AnalyticsScheduleRecord {
+  return {
+    id: String(row['id']),
+    workspaceId: String(row['workspaceId']),
+    spec: String(row['spec']),
+    dataset: String(row['dataset']),
+    params: (row['params'] ?? {}) as AnalyticsScheduleRecord['params'],
+    everyMinutes: Number(row['everyMinutes']),
+    sink: row['sink'] as AnalyticsSink,
+    enabled: Boolean(row['enabled']),
+    lastDatasetVersionId: row['lastDatasetVersionId'] ? String(row['lastDatasetVersionId']) : null,
+    nextRunAt: isoInstant(row['nextRunAt']),
+    createdBy: row['createdBy'] ? String(row['createdBy']) : null,
+    createdAt: isoInstant(row['createdAt']),
+  };
+}
+
+export async function dbCreateAnalyticsSchedule(input: {
+  workspaceId: string;
+  createdBy: string;
+  spec: string;
+  dataset: string;
+  params: Record<string, string | number | boolean>;
+  everyMinutes: number;
+  sink: AnalyticsSink;
+}): Promise<AnalyticsScheduleRecord> {
+  const rows = await queryService<Record<string, unknown>>(
+    `INSERT INTO octo.analytics_schedules
+       (workspace_id, spec, dataset, params, every_minutes, sink, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING ${SCHEDULE_COLUMNS}`,
+    [
+      input.workspaceId,
+      input.spec,
+      input.dataset,
+      JSON.stringify(input.params),
+      input.everyMinutes,
+      JSON.stringify(input.sink),
+      input.createdBy,
+    ]
+  );
+  return toScheduleRecord(rows[0]!);
+}
+
+export async function dbListAnalyticsSchedules(workspaceId: string): Promise<AnalyticsScheduleRecord[]> {
+  const rows = await queryService<Record<string, unknown>>(
+    `SELECT ${SCHEDULE_COLUMNS} FROM octo.analytics_schedules WHERE workspace_id = $1 ORDER BY created_at`,
+    [workspaceId]
+  );
+  return rows.map(toScheduleRecord);
+}
+
+export async function dbDeleteAnalyticsSchedule(workspaceId: string, id: string): Promise<boolean> {
+  const rows = await queryService<{ id: string }>(
+    'DELETE FROM octo.analytics_schedules WHERE workspace_id = $1 AND id = $2 RETURNING id',
+    [workspaceId, id]
+  );
+  return rows.length > 0;
+}
+
+/** Enabled schedules whose next run time has passed, across all workspaces. */
+export async function dbListDueAnalyticsSchedules(limit = 50): Promise<AnalyticsScheduleRecord[]> {
+  const rows = await queryService<Record<string, unknown>>(
+    `SELECT ${SCHEDULE_COLUMNS} FROM octo.analytics_schedules
+     WHERE enabled AND next_run_at <= now()
+     ORDER BY next_run_at LIMIT $1`,
+    [limit]
+  );
+  return rows.map(toScheduleRecord);
+}
+
+/** Moves a schedule's clock forward and records the dataset version it last ran on. */
+export async function dbMarkAnalyticsScheduleRan(
+  id: string,
+  everyMinutes: number,
+  datasetVersionId: string | null
+): Promise<void> {
+  await queryService(
+    `UPDATE octo.analytics_schedules
+     SET next_run_at = now() + make_interval(mins => $2),
+         last_dataset_version_id = COALESCE($3::uuid, last_dataset_version_id)
+     WHERE id = $1`,
+    [id, everyMinutes, datasetVersionId]
+  );
+}
+
+export async function dbGetAnalyticsJob(workspaceId: string, jobId: string): Promise<DbJobRow | null> {
+  const rows = await queryService<DbJobRow>(
+    `SELECT ${JOB_COLUMNS} FROM octo.jobs
+     WHERE id = $1 AND workspace_id = $2 AND job_type = 'analytics_query'`,
+    [jobId, workspaceId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function dbGetAnalyticsResult(
+  workspaceId: string,
+  resultId: string
+): Promise<AnalyticsResultRecord | null> {
+  const rows = await queryService<Record<string, unknown>>(
+    `SELECT ${ANALYTICS_RESULT_COLUMNS} FROM octo.analytics_results
+     WHERE id = $1 AND workspace_id = $2`,
+    [resultId, workspaceId]
+  );
+  return rows[0] ? toAnalyticsResultRecord(rows[0]) : null;
+}
+
+export async function dbGetAnalyticsResultByJob(
+  workspaceId: string,
+  jobId: string
+): Promise<AnalyticsResultRecord | null> {
+  const rows = await queryService<Record<string, unknown>>(
+    `SELECT ${ANALYTICS_RESULT_COLUMNS} FROM octo.analytics_results
+     WHERE job_id = $1 AND workspace_id = $2`,
+    [jobId, workspaceId]
+  );
+  return rows[0] ? toAnalyticsResultRecord(rows[0]) : null;
+}
+
+/** Lists the workspace's logical datasets with their newest version. */
+export async function dbListDatasets(workspaceId: string): Promise<DatasetSummary[]> {
+  const rows = await queryService<{
+    datasetId: string;
+    dataset: string;
+    name: string;
+    latestVersionId: string;
+    latestVersion: number;
+    versionCount: number;
+    rowCount: number;
+    partCount: number;
+    watermark: string | null;
+    createdAt: string;
+  }>(
+    `SELECT d.id AS "datasetId", d.slug AS dataset, d.name,
+            v.id AS "latestVersionId", v.version AS "latestVersion",
+            (SELECT count(*) FROM octo.dataset_versions x WHERE x.dataset_id = d.id)::int AS "versionCount",
+            v.row_count::double precision AS "rowCount",
+            cardinality(v.object_keys) AS "partCount",
+            v.watermark,
+            v.created_at AS "createdAt"
+     FROM octo.datasets d
+     JOIN LATERAL (
+       SELECT * FROM octo.dataset_versions v
+       WHERE v.dataset_id = d.id
+       ORDER BY v.version DESC
+       LIMIT 1
+     ) v ON true
+     WHERE d.workspace_id = $1
+     ORDER BY d.slug`,
+    [workspaceId]
+  );
+  return rows.map((row) => ({
+    datasetId: row.datasetId,
+    dataset: row.dataset,
+    name: row.name,
+    latestVersionId: row.latestVersionId,
+    latestVersion: Number(row.latestVersion),
+    versionCount: Number(row.versionCount),
+    rowCount: Number(row.rowCount ?? 0),
+    partCount: Number(row.partCount ?? 0),
+    watermark: row.watermark === null || row.watermark === undefined ? null : String(row.watermark),
+    createdAt: isoInstant(row.createdAt),
+  }));
+}
+
+/** Lists the workspace's analytics_query jobs, newest first, with their artifact. */
+export async function dbListAnalyticsRuns(
+  workspaceId: string,
+  limit = 20
+): Promise<AnalyticsRunSummary[]> {
+  const rows = await queryService<{
+    jobId: string;
+    state: string;
+    errorCode: string | null;
+    errorSummary: string | null;
+    datasetVersionId: string | null;
+    querySpec: string | null;
+    resultId: string | null;
+    rowCount: number | null;
+    contentHash: string | null;
+    engineVersion: string | null;
+    createdAt: string;
+    completedAt: string | null;
+  }>(
+    `SELECT j.id AS "jobId", j.state,
+            j.error_code AS "errorCode", j.error_summary AS "errorSummary",
+            j.payload->>'datasetVersionId' AS "datasetVersionId",
+            j.payload->>'querySpec' AS "querySpec",
+            r.id AS "resultId",
+            r.row_count::double precision AS "rowCount",
+            r.content_hash AS "contentHash",
+            r.engine_version AS "engineVersion",
+            j.created_at AS "createdAt", j.completed_at AS "completedAt"
+     FROM octo.jobs j
+     LEFT JOIN octo.analytics_results r ON r.job_id = j.id
+     WHERE j.workspace_id = $1 AND j.job_type = 'analytics_query'
+     ORDER BY j.created_at DESC
+     LIMIT $2`,
+    [workspaceId, limit]
+  );
+  return rows.map((row) => ({
+    jobId: row.jobId,
+    state: row.state,
+    errorCode: row.errorCode ?? null,
+    errorSummary: row.errorSummary ?? null,
+    datasetVersionId: row.datasetVersionId ?? null,
+    querySpec: row.querySpec ?? null,
+    resultId: row.resultId ?? null,
+    rowCount: row.rowCount === null || row.rowCount === undefined ? null : Number(row.rowCount),
+    contentHash: row.contentHash ?? null,
+    engineVersion: row.engineVersion ?? null,
+    createdAt: isoInstant(row.createdAt),
+    completedAt:
+      row.completedAt === null || row.completedAt === undefined ? null : isoInstant(row.completedAt),
+  }));
+}
+
+/**
+ * Records one result artifact per job. The unique constraint on `job_id` makes a
+ * retry converge on the same row instead of registering a second artifact.
+ */
+export async function dbRegisterAnalyticsResult(input: {
+  workspaceId: string;
+  datasetVersionId: string;
+  jobId: string;
+  resultId: string;
+  querySpec: string;
+  objectKey: string;
+  rowCount: number;
+  contentHash: string;
+  engineVersion: string;
+}): Promise<AnalyticsResultRecord> {
+  await queryService(
+    `INSERT INTO octo.analytics_results
+       (id, workspace_id, dataset_version_id, job_id, query_spec, object_key,
+        row_count, content_hash, engine_version)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (job_id) DO NOTHING`,
+    [
+      input.resultId,
+      input.workspaceId,
+      input.datasetVersionId,
+      input.jobId,
+      input.querySpec,
+      input.objectKey,
+      input.rowCount,
+      input.contentHash,
+      input.engineVersion,
+    ]
+  );
+
+  const existing = await dbGetAnalyticsResultByJob(input.workspaceId, input.jobId);
+  if (!existing) throw new Error('RESULT_REGISTRATION_FAILED');
+  return existing;
+}
+

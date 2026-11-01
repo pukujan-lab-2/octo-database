@@ -76,6 +76,20 @@ jobs:
       - name: Integrity integration tests
         run: '"$VALIDATION_ROOT/venv/bin/python" -m unittest discover -s tests -v'
 
+      - name: Set up Java for TLC
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: TLA+ models (TLC)
+        env:
+          TLA_VERSION: v1.7.4
+          TLA_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/tla2tools.jar" "https://github.com/tlaplus/tlaplus/releases/download/$TLA_VERSION/tla2tools.jar"
+          echo "$TLA_SHA256  $RUNNER_TEMP/tla2tools.jar" | sha256sum -c -
+          TLA2TOOLS="$RUNNER_TEMP/tla2tools.jar" verification/tla/check.sh
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -177,6 +191,19 @@ jobs:
           OCTO_ADMIN_URL: postgresql://postgres:postgres@localhost:54329/postgres
         run: npx tsx scripts/verify-workspace-query.ts
 
+      - name: Verify analytics lake (Slice 7)
+        # Proves the accepted analytics job end to end against a real PostgreSQL
+        # catalog and the pinned DuckDB build: registration inspects the Parquet
+        # footers and assigns a version, the named query runs as a job, DuckDB's
+        # answer equals PostgreSQL's over the same rows, a rerun reproduces the
+        # rows, and another workspace cannot see the version. Object bytes use the
+        # local backend, which is the same ObjectStore contract production serves
+        # over R2.
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:54329/postgres
+          OCTO_SERVICE_URL: postgresql://octo_service:octo_service@localhost:54329/postgres
+        run: npx tsx scripts/verify-analytics.ts
+
       - name: Playwright E2E and Multimodal Vision QA
         env:
           INFERHUB_API_KEY: ${{ secrets.INFERHUB_API_KEY }}
@@ -204,7 +231,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --quiet --depth 1 https://github.com/Pukujan/agent-stack-train.git "$VALIDATION_ROOT/train"
+          git clone --quiet https://github.com/Pukujan/agent-stack-train.git "$VALIDATION_ROOT/train"
+          # Validate at the commit the installer recorded, so an upgrade needs no edit here.
+          STACK_COMMIT=$(python3 -c 'import json; print(json.load(open(".coord/hotload.lock.json"))["stack"]["commit"])')
+          git -C "$VALIDATION_ROOT/train" checkout --quiet "$STACK_COMMIT"
           "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/train/scripts/check_manifest.py" \
             --manifest stack-manifest.json \
             --train "$VALIDATION_ROOT/train/stack-releases.json"
@@ -213,18 +243,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --quiet https://github.com/Pukujan/project-continuity-modules.git "$VALIDATION_ROOT/pcm"
-          git -C "$VALIDATION_ROOT/pcm" checkout --quiet 85e6aa7a889b57aeef270213c37258194717e358
-          PYTHONPATH="$VALIDATION_ROOT/pcm/src" "$VALIDATION_ROOT/venv/bin/python" -m continuity validate --root .
+          PYTHONPATH="$VALIDATION_ROOT/train/pcm/src" "$VALIDATION_ROOT/venv/bin/python" -m continuity validate --root .
 
       - name: Validate full CGM adapter
         shell: bash
         run: |
           set -euo pipefail
-          git clone --quiet https://github.com/Pukujan/content-generation-modules.git "$VALIDATION_ROOT/cgm"
-          git -C "$VALIDATION_ROOT/cgm" checkout --quiet 5c8c5f167098d04cf96fb1fe449880001a1edd14
-          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/cgm/scripts/validate_content_system.py" \
-            --root "$VALIDATION_ROOT/cgm" \
+          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/train/cgm/scripts/validate_content_system.py" \
+            --root "$VALIDATION_ROOT/train/cgm" \
             --adapter .content-system \
             --project-root .
 
@@ -232,17 +258,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --quiet https://github.com/Pukujan/agent-custom-setup.git "$VALIDATION_ROOT/acs"
-          git -C "$VALIDATION_ROOT/acs" checkout --quiet 3df982adc008b9caa4b3a9991f77486393c9a30b
-          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/acs/modules/coordination/multi-agent-hotload/v0.1.0/scripts/hotload_check.py" \
-            --root "$VALIDATION_ROOT/acs/modules/coordination/multi-agent-hotload/v0.1.0" \
+          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/train/acs/modules/coordination/multi-agent-hotload/v0.1.0/scripts/hotload_check.py" \
+            --root "$VALIDATION_ROOT/train/acs/modules/coordination/multi-agent-hotload/v0.1.0" \
             --assignment "$GITHUB_WORKSPACE/.coord/assignment.json" \
-            --cgm-root "$VALIDATION_ROOT/cgm" \
+            --cgm-root "$VALIDATION_ROOT/train/cgm" \
             --adopter-root "$GITHUB_WORKSPACE"
 
       - name: Check dev root layout (ACS dev_root_check)
         shell: bash
         run: |
           set -euo pipefail
-          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/acs/modules/coordination/multi-agent-hotload/v0.1.0/scripts/dev_root_check.py" \
+          "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/train/acs/modules/coordination/multi-agent-hotload/v0.1.0/scripts/dev_root_check.py" \
             --dev-root "$(dirname "$GITHUB_WORKSPACE")"

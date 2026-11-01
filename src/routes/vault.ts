@@ -15,18 +15,18 @@ import { buildRouteProbe, checkVaultItem, classifyRouteProbe } from '../lib/vaul
 import {
   BULK_MAX_LINES,
   grantExpiresAt,
+  inferVaultGroup,
   leaseExpiresAt,
   parseBulkVaultLine,
   parseGrantHours,
   parseLeaseDays,
   parseVaultItem,
   parseVaultRoute,
-  presentVaultItem,
   routeKeySlug,
   STALE_PURGE_MS,
-  VAULT_KINDS,
   type VaultItemInput,
   type VaultKind,
+  type VaultRouteInput,
 } from '../lib/vault-policy';
 import { authenticateRequest } from '../server/auth-context';
 import { confirmGate } from '../server/confirm';
@@ -34,6 +34,7 @@ import {
   dbConsumeVaultGrant,
   dbDeleteVaultGrant,
   dbDeleteVaultItem,
+  dbDeleteVaultItems,
   dbDeleteVaultRoute,
   dbGetVaultItem,
   dbGetVaultRoute,
@@ -55,6 +56,7 @@ import {
   dbPurgeStaleVaultItems,
   dbRevokeVaultLease,
   dbUpdateVaultHealth,
+  dbUpdateVaultItem,
   dbUpdateVaultRouteHealth,
   type VaultItemRow,
   type VaultRouteRow,
@@ -100,6 +102,8 @@ function publicItem(row: VaultItemRow) {
     label: row.label,
     description: row.description,
     kind: row.kind,
+    kindSource: row.kindSource,
+    group: inferVaultGroup(row.label),
     username: row.username,
     url: row.url,
     urlKind: row.urlKind,
@@ -132,20 +136,22 @@ function publicRoute(row: VaultRouteRow) {
   };
 }
 
-function agentItem(row: VaultItemRow, grantId: string, decoy: boolean) {
-  return presentVaultItem({
+/**
+ * What a grant may know about an item before it asks for a working key: the
+ * shape of the cabinet, never the stored value. Nothing here decrypts.
+ */
+function inventoryItem(row: VaultItemRow, routes: VaultRouteRow[], origin: string) {
+  return {
     id: row.id,
     label: row.label,
     description: row.description,
     kind: row.kind,
-    username: row.username,
     url: row.url,
-    secret: openSeal(row.secretEncrypted),
-    notes: openSeal(row.notesEncrypted),
+    hasSecret: Boolean(row.secretEncrypted),
+    hasNotes: Boolean(row.notesEncrypted),
     healthStatus: row.healthStatus,
-    grantId,
-    decoy,
-  });
+    routes: routes.map((route) => relayRoute(origin, route)),
+  };
 }
 
 function mintToken(): { raw: string; hash: string; prefix: string } {
@@ -198,6 +204,12 @@ export const handleVaultRoutes: RouteHandler = async (req, res, url) => {
 
     const auth = await authenticateRequest(req);
     if (!auth) {
+      if (bearer(req)?.startsWith(GRANT_PREFIX)) {
+        sendJson(res, 403, {
+          error: 'FORBIDDEN: a vault grant cannot call this endpoint. Use /api/vault/open and /api/vault/open/lease.',
+        });
+        return true;
+      }
       sendJson(res, 401, { error: 'UNAUTHORIZED: sign in to use the vault.' });
       return true;
     }
@@ -260,11 +272,8 @@ export const handleVaultRoutes: RouteHandler = async (req, res, url) => {
         sendJson(res, 400, { error: `BULK_TOO_LARGE: at most ${BULK_MAX_LINES} lines per paste.` });
         return true;
       }
-      const kindRaw = typeof body['kind'] === 'string' ? body['kind'] : 'token';
-      if (!VAULT_KINDS.includes(kindRaw as VaultKind)) {
-        sendJson(res, 400, { error: 'KIND_INVALID: kind must be login, token, url, or note.' });
-        return true;
-      }
+      // The kind is per line now: a `kind:` prefix overrides, otherwise the
+      // label infers it. The batch-wide selector is gone.
       const workspaceId = body['workspaceId'];
       const scope = workspaceId === undefined || workspaceId === null || workspaceId === '' ? null : String(workspaceId);
       if (!(await workspaceAllowed(res, auth.principal.id, scope))) return true;
@@ -273,7 +282,7 @@ export const handleVaultRoutes: RouteHandler = async (req, res, url) => {
       // consumes the one-time code.
       const parsed: VaultItemInput[] = [];
       for (let index = 0; index < lines.length; index += 1) {
-        const item = parseBulkVaultLine(lines[index]!, kindRaw as VaultKind, scope);
+        const item = parseBulkVaultLine(lines[index]!, null, scope);
         if (!item.ok) {
           sendJson(res, 400, { error: `Line ${index + 1}: ${item.error.replace('BULK_LINE: ', '')}` });
           return true;
@@ -291,6 +300,7 @@ export const handleVaultRoutes: RouteHandler = async (req, res, url) => {
           label: item.label,
           description: item.description,
           kind: item.kind,
+          kindSource: item.kindSource,
           username: item.username,
           url: item.url,
           urlKind: item.urlKind,
@@ -299,6 +309,35 @@ export const handleVaultRoutes: RouteHandler = async (req, res, url) => {
         }))
       );
       sendJson(res, 201, { inserted: parsed.length });
+      return true;
+    }
+
+    if (path === '/api/vault/items/bulk-delete' && req.method === 'POST') {
+      const body = await readJsonObject(req);
+      const rawIds = body['ids'];
+      if (!Array.isArray(rawIds) || rawIds.some((id) => typeof id !== 'string')) {
+        sendJson(res, 400, { error: 'BULK_IDS: ids must be an array of item ids.' });
+        return true;
+      }
+      const ids = Array.from(new Set((rawIds as string[]).map((id) => id.trim()).filter(Boolean)));
+      if (ids.length === 0) {
+        sendJson(res, 400, { error: 'BULK_IDS: select at least one item to delete.' });
+        return true;
+      }
+      if (ids.length > BULK_MAX_LINES) {
+        sendJson(res, 400, { error: `BULK_TOO_LARGE: at most ${BULK_MAX_LINES} items per delete.` });
+        return true;
+      }
+      // Validate before the gate so a malformed request never burns the code.
+      for (const id of ids) {
+        if (!requireUuid(res, id, 'ids')) return true;
+      }
+
+      if (!(await confirmGate(res, auth, body['confirmSecret'], { requireMfa: true, mfaCode: body['mfaCode'] }))) {
+        return true;
+      }
+      const deleted = await dbDeleteVaultItems(auth.principal.id, ids);
+      sendJson(res, 200, { deleted });
       return true;
     }
 
@@ -398,6 +437,46 @@ export const handleVaultRoutes: RouteHandler = async (req, res, url) => {
             notes: openSeal(row.notesEncrypted),
           },
         });
+        return true;
+      }
+      if (req.method === 'PATCH') {
+        const body = await readJsonObject(req);
+        if (!(await confirmGate(res, auth, body['confirmSecret'], { requireMfa: true, mfaCode: body['mfaCode'] }))) {
+          return true;
+        }
+        const existing = await dbGetVaultItem(auth.principal.id, itemId);
+        if (!existing) {
+          sendJson(res, 404, { error: 'NOT_FOUND: no vault item with that id.' });
+          return true;
+        }
+        // An edit that leaves the secret alone sends no `secret` key at all, so
+        // the stored value is validated in its place and written back unchanged.
+        const secretReplaced = Object.prototype.hasOwnProperty.call(body, 'secret');
+        const parsed = parseVaultItem(
+          { ...body, secret: secretReplaced ? body['secret'] : openSeal(existing.secretEncrypted) },
+          existing.workspaceId
+        );
+        if (!parsed.ok) {
+          sendJson(res, 400, { error: parsed.error });
+          return true;
+        }
+        await dbUpdateVaultItem({
+          principalId: auth.principal.id,
+          itemId,
+          label: parsed.value.label,
+          description: parsed.value.description,
+          kind: parsed.value.kind,
+          // A kind the person picked is no longer an inference.
+          kindSource: parsed.value.kind === existing.kind ? existing.kindSource : 'explicit',
+          username: parsed.value.username,
+          url: parsed.value.url,
+          urlKind: parsed.value.urlKind,
+          secretEncrypted: secretReplaced ? seal(parsed.value.secret) : existing.secretEncrypted,
+          notesEncrypted: seal(parsed.value.notes),
+          secretReplaced,
+        });
+        const updated = await dbGetVaultItem(auth.principal.id, itemId);
+        sendJson(res, 200, { item: updated ? publicItem(updated) : { id: itemId } });
         return true;
       }
       if (req.method === 'DELETE') {
@@ -508,6 +587,10 @@ export const handleVaultRoutes: RouteHandler = async (req, res, url) => {
       const items = await dbListVaultItems(auth.principal.id);
       const checked: Array<{ id: string; healthStatus: string; healthDetail: string }> = [];
       for (const item of items) {
+        // A kind inferred from a label is not evidence the value can be
+        // probed. Skipping inferred rows keeps a 404 on a backfilled base URL
+        // from marking a live key stale (and eventually purging it).
+        if (item.kindSource === 'inferred') continue;
         const secret = openSeal(item.secretEncrypted);
         const verdict = await checkVaultItem(
           {
@@ -620,30 +703,104 @@ async function openCabinet(req: IncomingMessage, res: ServerResponse, url: URL):
     cabinet: grant.workspaceId ? 'workspace' : 'account',
     workspaceId: grant.workspaceId,
     expiresAt: grant.expiresAt,
-    items: rows.map((row) => ({
-      ...agentItem(row, grant.grantId, grant.decoy),
-      routes: (byItem.get(row.id) ?? []).map((route) => relayRoute(origin, route)),
-    })),
+    items: rows.map((row) => inventoryItem(row, byItem.get(row.id) ?? [], origin)),
   });
   return true;
 }
 
+type LeaseRouteInput = Pick<
+  VaultRouteInput,
+  'baseUrl' | 'authScheme' | 'authHeader' | 'bodyField' | 'basicUsername'
+>;
+
+/**
+ * Optional lease-time injection recipe. The caller may name the vendor base URL
+ * and scheme it wants the working key to use; the lease stores that recipe and
+ * the proxy applies it to whatever upstream the caller names per request.
+ */
+function parseLeaseRoute(
+  body: Record<string, unknown>
+): { ok: true; value: LeaseRouteInput | null } | { ok: false; error: string } {
+  const baseUrl = body['baseUrl'];
+  if (baseUrl === undefined || baseUrl === null || baseUrl === '') return { ok: true, value: null };
+  const parsed = parseVaultRoute({
+    name: 'lease route',
+    baseUrl,
+    authScheme: body['authScheme'] ?? 'bearer',
+    authHeader: body['authHeader'],
+    bodyField: body['bodyField'],
+    basicUsername: body['basicUsername'],
+  });
+  if (!parsed.ok) return parsed;
+  return { ok: true, value: parsed.value };
+}
+
+/**
+ * The injection recipe a working key carries. It is copied onto the lease, so
+ * the key is a free-form credential: the caller names any upstream per request
+ * and Octo only needs to know how to place the secret. A lease-time recipe
+ * wins, then an existing dashboard route, then the item's own url (bearer).
+ */
+function leaseRecipe(
+  item: VaultItemRow,
+  supplied: LeaseRouteInput | null,
+  routes: VaultRouteRow[]
+): {
+  baseUrl: string | null;
+  authScheme: string;
+  authHeader: string | null;
+  bodyField: string | null;
+  basicUsername: string | null;
+} {
+  if (supplied) {
+    return {
+      baseUrl: supplied.baseUrl,
+      authScheme: supplied.authScheme,
+      authHeader: supplied.authHeader ?? null,
+      bodyField: supplied.bodyField ?? null,
+      basicUsername: supplied.basicUsername ?? null,
+    };
+  }
+  const route = routes[0];
+  if (route) {
+    return {
+      baseUrl: route.baseUrl,
+      authScheme: route.authScheme,
+      authHeader: route.authHeader,
+      bodyField: route.bodyField,
+      basicUsername: route.basicUsername,
+    };
+  }
+  return {
+    baseUrl: item.url && /^https?:\/\//i.test(item.url) ? item.url : null,
+    authScheme: 'bearer',
+    authHeader: null,
+    bodyField: null,
+    basicUsername: null,
+  };
+}
+
 /**
  * Exchanges a grant for one working key scoped to one stored item. The key is
- * shown once; Octo keeps only its hash. A new mint for the same (grant, item)
- * retires the previous key.
+ * shown once; Octo keeps only its hash. Each mint is a separate key, so every
+ * consumer of the same (grant, item) can hold its own.
  */
 async function mintLease(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
   const grant = await loadGrant(req, res);
   if (!grant) return true;
   if (grant.decoy) {
-    sendJson(res, 403, { error: 'FORBIDDEN: a decoy grant cannot mint a working key.' });
+    sendJson(res, 403, { error: 'FORBIDDEN: that grant cannot mint a working key.' });
     return true;
   }
   const body = await readJsonObject(req);
   const days = parseLeaseDays(body['expiresInDays']);
   if (!days.ok) {
     sendJson(res, 400, { error: days.error });
+    return true;
+  }
+  const supplied = parseLeaseRoute(body);
+  if (!supplied.ok) {
+    sendJson(res, 400, { error: supplied.error });
     return true;
   }
 
@@ -668,6 +825,9 @@ async function mintLease(req: IncomingMessage, res: ServerResponse, url: URL): P
     return true;
   }
 
+  const routes = await dbListVaultRoutesForGrant(item.id);
+  const recipe = leaseRecipe(item, supplied.value, routes);
+
   const token = mintLeaseToken();
   const id = randomUUID();
   const expiresAt = leaseExpiresAt(days.days);
@@ -680,20 +840,40 @@ async function mintLease(req: IncomingMessage, res: ServerResponse, url: URL): P
     prefix: token.prefix,
     name: `${grant.grantName} / ${item.label}`.slice(0, 200),
     expiresAt,
+    baseUrl: recipe.baseUrl,
+    authScheme: recipe.authScheme,
+    authHeader: recipe.authHeader,
+    bodyField: recipe.bodyField,
+    basicUsername: recipe.basicUsername,
   });
-  const routes = await dbListVaultRoutesForGrant(item.id);
   const origin = getPublicOrigin(req, url);
   sendJson(res, 201, {
     lease: { id, itemId: item.id, itemLabel: item.label, prefix: token.prefix, expiresAt },
     rawSecret: token.raw,
+    proxy: {
+      url: `${origin}/api/vault/proxy`,
+      targetHeader: 'x-octo-target',
+      defaultTarget: recipe.baseUrl,
+      hint:
+        'Send the working key as a Bearer token and the vendor URL in x-octo-target. ' +
+        'Any http(s) target works; defaultTarget is used when the target is a path suffix.',
+    },
     routes: routes.map((route) => relayRoute(origin, route)),
   });
   return true;
 }
 
+/**
+ * A narrower grant: same cabinet, shorter lifetime, still inventory-only. Kept
+ * for callers that already mint one; it no longer differs in what it discloses.
+ */
 async function mintDecoy(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const grant = await loadGrant(req, res);
   if (!grant) return true;
+  if (grant.decoy) {
+    sendJson(res, 403, { error: 'FORBIDDEN: a narrowed grant cannot mint another.' });
+    return true;
+  }
   const body = await readJsonObject(req);
   const hours = parseGrantHours(body['expiresInHours']);
   if (!hours.ok) {
@@ -710,7 +890,7 @@ async function mintDecoy(req: IncomingMessage, res: ServerResponse): Promise<boo
     parentGrantId: grant.grantId,
     keyHash: token.hash,
     prefix: token.prefix,
-    name: `${grant.grantName} decoy`,
+    name: `${grant.grantName} (narrowed)`,
     expiresAt,
   });
   sendJson(res, 201, {

@@ -139,6 +139,75 @@ export const OCTO_CAPABILITIES: CapabilityDescriptor[] = [
     description: 'Drain one pass of the background job queue for an authorized workspace.',
   },
   {
+    action: 'datasets.register',
+    method: 'POST',
+    path: '/api/workspaces/<id>/datasets',
+    requiredScope: 'write',
+    description:
+      'Register an immutable Parquet dataset version: supply base64 parts, a declared schema, and provenance; the server validates the Parquet footers, assigns the next version, derives the object keys, and writes the bytes. A re-export is a new version, never a mutation. Pass append: true to extend the newest version with new date partitions without re-uploading earlier ones.',
+  },
+  {
+    action: 'analytics.register_spec',
+    method: 'POST',
+    path: '/api/workspaces/<id>/analytics/specs',
+    requiredScope: 'write',
+    description:
+      'Register a workspace query spec: one SELECT over a dataset (exposed to the SQL as the view "data") with typed $params. The server validates it against the dataset schema and stores it as an immutable version, ws:<slug>@<n>. A spec can read only the dataset version it is run over.',
+  },
+  {
+    action: 'analytics.specs',
+    method: 'GET',
+    path: '/api/workspaces/<id>/analytics/specs',
+    requiredScope: 'read',
+    description: 'List the workspace\'s registered query specs with their SQL and parameters.',
+  },
+  {
+    action: 'analytics.schedule',
+    method: 'POST',
+    path: '/api/workspaces/<id>/analytics/schedules',
+    requiredScope: 'write',
+    description:
+      'Run a spec on a schedule: every N minutes (5 to 10080), over a dataset\'s newest version, writing the result rows into analytics.<table> in the workspace database (replace or upsert by key columns). A run is skipped until a new dataset version has landed.',
+  },
+  {
+    action: 'analytics.schedules',
+    method: 'GET',
+    path: '/api/workspaces/<id>/analytics/schedules',
+    requiredScope: 'read',
+    description: 'List the workspace\'s analytics schedules with their next run time and the dataset version each last ran on.',
+  },
+  {
+    action: 'analytics.unschedule',
+    method: 'DELETE',
+    path: '/api/workspaces/<id>/analytics/schedules/<scheduleId>',
+    requiredScope: 'write',
+    description: 'Delete an analytics schedule. Rows it already wrote stay in the workspace database.',
+  },
+  {
+    action: 'analytics.query',
+    method: 'POST',
+    path: '/api/workspaces/<id>/analytics/queries',
+    requiredScope: 'read',
+    description:
+      'Submit one named analytical query over a registered dataset version. The caller names a built-in spec or a registered workspace spec (ws:<slug>@<n>) plus its params, never raw SQL; the server enqueues an analytics_query job. Poll the job with analytics.query_status.',
+  },
+  {
+    action: 'analytics.query_status',
+    method: 'GET',
+    path: '/api/workspaces/<id>/analytics/queries/<jobId>',
+    requiredScope: 'read',
+    description:
+      'Read one analytics job\'s state, error code and summary, and -- once completed -- its result id and artifact metadata.',
+  },
+  {
+    action: 'analytics.result',
+    method: 'GET',
+    path: '/api/workspaces/<id>/analytics/results/<resultId>',
+    requiredScope: 'read',
+    description:
+      'Fetch a completed analytics result: its metadata plus a short-lived download URL for the derived Parquet artifact.',
+  },
+  {
     action: 'activity.list',
     method: 'GET',
     path: '/api/activity?workspaceId=<id>',
@@ -253,6 +322,36 @@ export const OCTO_CAPABILITIES: CapabilityDescriptor[] = [
     requiredScope: 'delete',
     description: 'Revoke one of this principal\'s API keys. Destructive.',
   },
+  {
+    action: 'traces.ingest',
+    method: 'POST',
+    path: '/api/workspaces/<id>/otel/v1/traces',
+    requiredScope: 'write',
+    description:
+      'Send OTLP/HTTP traces (application/x-protobuf, optionally gzip). Octo forwards them to the workspace\'s own Phoenix project; the project is derived from the workspace, never passed by the caller. Eval scores: POST /api/workspaces/<id>/otel/v1/span_annotations (Phoenix span annotation body).',
+  },
+  {
+    action: 'traces.link',
+    method: 'GET',
+    path: '/api/workspaces/<id>/otel/link',
+    requiredScope: 'read',
+    description: 'Return the URL of the workspace\'s project in the hosted Phoenix trace viewer.',
+  },
+  {
+    action: 'ux_analytics.enable',
+    method: 'POST',
+    path: '/api/workspaces/<id>/ux-analytics',
+    requiredScope: 'write',
+    description:
+      'Turn on UX analytics (Umami: clicks, session replays with every form field masked, heatmaps) for the workspace. Body { domain }. Owner or admin. Creates the workspace\'s Umami website once, adds its members, and returns the tracking tags. GET the same path for the current state.',
+  },
+  {
+    action: 'ux_analytics.link',
+    method: 'GET',
+    path: '/api/workspaces/<id>/ux-analytics/link',
+    requiredScope: 'read',
+    description: 'Return a URL that signs the caller in to Umami on the workspace\'s website.',
+  },
 ];
 
 /**
@@ -321,7 +420,7 @@ export function capabilitiesForScopes(scopes: string[]): CapabilityDescriptor[] 
 
 /** Workspace role required for the operations exposed by the current inventory. */
 export function minimumRoleForCapability(action: string): 'member' | 'operator' | 'admin' {
-  if (action === 'files.delete' || action === 'rag.delete') return 'admin';
+  if (action === 'files.delete' || action === 'rag.delete' || action === 'ux_analytics.enable') return 'admin';
   if (
     ['files.upload', 'files.publish', 'files.unpublish', 'files.archive', 'files.restore', 'jobs.enqueue', 'jobs.run', 'epistemic.record', 'graph.project', 'rag.ingest', 'rag.rename'].includes(
       action

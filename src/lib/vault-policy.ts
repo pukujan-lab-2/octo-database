@@ -4,8 +4,6 @@
  * one definition.
  */
 
-import { createHmac } from 'node:crypto';
-
 export const VAULT_KINDS = ['login', 'token', 'url', 'note'] as const;
 export type VaultKind = (typeof VAULT_KINDS)[number];
 
@@ -45,6 +43,7 @@ export interface VaultItemInput {
   label: string;
   description: string;
   kind: VaultKind;
+  kindSource: 'explicit' | 'inferred';
   username: string | null;
   url: string | null;
   urlKind: UrlKind | null;
@@ -143,6 +142,7 @@ export function parseVaultItem(
       label: label.value,
       description: description.value,
       kind,
+      kindSource: 'explicit',
       username: username.value,
       url: url.value,
       urlKind: urlKind.value,
@@ -151,6 +151,46 @@ export function parseVaultItem(
       workspaceId,
     },
   };
+}
+
+/**
+ * What a `.env`-style label says it holds, or null when the label carries no
+ * signal. An imported paste is one `KIND=value` batch with no per-line
+ * selector, so the label decides: names that end in URL/ENDPOINT/HOST are
+ * addresses, names that end in KEY/TOKEN/SECRET/PASSWORD are credentials,
+ * names that end in MODEL/MODE/ID/NAME/USER are plain config values. A
+ * secret that is itself an http(s) string confirms the address reading.
+ */
+export function inferVaultKind(label: string, secret: string): VaultKind | null {
+  const name = label.toLowerCase();
+  if (/(^|[_-])(url|uri|endpoint|host|host_lan|base_url|api_url|api_base|api_bases)$/.test(name)) {
+    return 'url';
+  }
+  if (/(^|[_-])(key|token|secret|password|passwd|pwd|bearer|hash|connection_string|access_key|access_key_id|key_id|api)$/.test(name)) {
+    return 'token';
+  }
+  if (/(^|[_-])(model|mode|name|user|username|id|ref|bucket|seconds|timeout|prefix|cmd|exe|origins|store|tier|disabled|required|tasks|workspace|config|ssh)$/.test(name)) {
+    return 'note';
+  }
+  if (/^https?:\/\//i.test(secret)) return 'url';
+  return null;
+}
+
+/**
+ * The service a label belongs to: the prefix before its first field name.
+ * Aliases that name the same service are folded together so one vendor does
+ * not appear twice in the group rail.
+ */
+export function inferVaultGroup(label: string): string {
+  const cleaned = label.replace(/^next_public_/i, '').toLowerCase();
+  const cut = cleaned.search(/[_-]/);
+  const group = (cut === -1 ? cleaned : cleaned.slice(0, cut)).trim() || cleaned;
+  const aliases: Record<string, string> = {
+    octodb: 'octo',
+    vastai: 'vast',
+    'ckff-cortex': 'ckff',
+  };
+  return aliases[group] ?? group;
 }
 
 /** Only a `url` item carries a url kind; anywhere else it is dropped. */
@@ -254,91 +294,44 @@ export function routeKeySlug(name: string): string {
 export const BULK_MAX_LINES = 200;
 
 /**
- * Parses one `LABEL=secret` line for the dashboard's paste-many import. The
- * label keeps everything before the first `=` (so `a=b=c` splits label `a`,
- * secret `b=c`), whitespace is trimmed, and a line with no separator or no
- * content on either side is refused with the 1-based line number in the
- * message. The caller supplies the batch-wide kind and workspace.
+ * Parses one line for the dashboard's paste-many import. The label keeps
+ * everything before the first `=` (so `a=b=c` splits label `a`, secret
+ * `b=c`), whitespace is trimmed, and a line with no separator or no content
+ * on either side is refused with the 1-based line number in the message.
+ * A line may override the batch kind with a `kind:` prefix (`url:X=…`);
+ * otherwise the kind is inferred from the label and value.
  */
 export function parseBulkVaultLine(
   line: string,
-  kind: VaultKind,
-  workspaceId: string | null
+  kind: VaultKind | null = null,
+  workspaceId: string | null = null
 ): { ok: true; value: VaultItemInput } | { ok: false; error: string } {
-  const sep = line.indexOf('=');
+  let kindSource: 'explicit' | 'inferred' = 'inferred';
+  let rest = line;
+  const prefix = /^(login|token|url|note):([\s\S]*)$/.exec(rest);
+  if (prefix) {
+    kindSource = 'explicit';
+    rest = prefix[2]!;
+  }
+  const sep = rest.indexOf('=');
   if (sep === -1) {
     return { ok: false, error: 'BULK_LINE: each line must be LABEL=secret.' };
   }
-  const label = line.slice(0, sep).trim();
-  const secret = line.slice(sep + 1).trim();
+  const label = rest.slice(0, sep).trim();
+  const secret = rest.slice(sep + 1).trim();
   if (!label || !secret) {
     return { ok: false, error: 'BULK_LINE: each line must be LABEL=secret.' };
   }
-  return parseVaultItem(
-    { label, description: label, kind, secret },
+  const explicitKind = prefix ? (prefix[1] as VaultKind) : null;
+  const parsed = parseVaultItem(
+    { label, description: label, kind: explicitKind ?? inferVaultKind(label, secret) ?? kind ?? 'token', secret },
     workspaceId
   );
-}
-
-export interface PresentedVaultItem {
-  id: string;
-  label: string;
-  description: string;
-  kind: VaultKind;
-  username: string | null;
-  url: string | null;
-  secret: string | null;
-  notes: string | null;
-  healthStatus: string;
-}
-
-/**
- * The payload an agent receives. A decoy keeps the label and the description
- * (so the agent still knows which item it is) and replaces the secret, the
- * username, and the notes. The stored secret is not an input to the stand-in.
- */
-export function presentVaultItem(input: PresentedVaultItem & { grantId: string; decoy: boolean }): PresentedVaultItem {
-  if (!input.decoy) {
-    return {
-      id: input.id,
-      label: input.label,
-      description: input.description,
-      kind: input.kind,
-      username: input.username,
-      url: input.url,
-      secret: input.secret,
-      notes: input.notes,
-      healthStatus: input.healthStatus,
-    };
+  if (!parsed.ok) return parsed;
+  const value = { ...parsed.value, kindSource };
+  if (value.kind === 'url' && !value.url && /^https?:\/\//i.test(secret)) {
+    value.url = secret;
   }
-  return {
-    id: input.id,
-    label: input.label,
-    description: input.description,
-    kind: input.kind,
-    username: input.username ? decoyField(input.grantId, input.id, 'username', input.kind) : null,
-    url: input.kind === 'url' && input.url ? decoyField(input.grantId, input.id, 'secret', 'url') : input.url,
-    secret: input.secret ? decoyField(input.grantId, input.id, 'secret', input.kind) : null,
-    notes: input.notes ? decoyField(input.grantId, input.id, 'notes', input.kind) : null,
-    healthStatus: input.healthStatus,
-  };
+  return { ok: true, value };
 }
 
-/**
- * Stand-in for one field of one item, stable for a grant. The stored secret is
- * not an input, so the result cannot be the real value. Nothing in the string
- * says "decoy": the agent-facing payload has the same shape as a real open.
- */
-export function decoyField(grantId: string, itemId: string, field: 'secret' | 'username' | 'notes', kind: VaultKind): string {
-  const mac = createHmac('sha256', 'octo-vault-decoy-v1')
-    .update(grantId)
-    .update('\0')
-    .update(itemId)
-    .update('\0')
-    .update(field)
-    .digest('base64url');
-  if (field === 'secret' && kind === 'url') return `https://example.invalid/v/${mac.slice(0, 24)}`;
-  if (field === 'username') return `user_${mac.slice(0, 12)}`;
-  if (field === 'notes') return mac.slice(0, 24);
-  return mac.slice(0, 43);
-}

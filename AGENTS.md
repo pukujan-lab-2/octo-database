@@ -45,8 +45,8 @@ Octo is a modular monolith organized by feature (vertical slice). `src/routes/<f
 **The layer rule is machine-checked, not advisory.** `npm run lint:imports` (`dependency-cruiser`, config `.dependency-cruiser.cjs`) runs inside the required `gates` check and fails CI on any import that crosses a layer boundary the wrong direction. Run it before opening a PR.
 
 - New endpoint → `src/routes/<family>.ts`, plus one line in the `ROUTES` array in `src/server/index.ts`.
-- New SQL → `src/server/db/<domain>.ts`, re-exported from the `src/server/db.ts` barrel.
-- Never import `src/server/**` from outside `src/server/**` and `src/routes/**`; never import one route module from another; never import `db-core.ts` or a `db/<domain>.ts` store directly (use the `src/server/db` barrel); never construct a `pg` pool or an `AsyncLocalStorage` outside `src/server/db-core.ts`.
+- New SQL → `src/server/db.ts` today. The planned split into `db-core.ts` and `db/<domain>.ts` stores has not landed; once it does, new SQL goes in a store re-exported from the `src/server/db.ts` barrel.
+- Never import `src/server/**` from outside `src/server/**` and `src/routes/**`; never import one route module from another; import database code only through the `src/server/db` barrel (never a future `db-core.ts` or `db/<domain>.ts` directly); never construct a `pg` pool or an `AsyncLocalStorage` outside the db module (`src/server/db.ts` today, `db-core.ts` after the split).
 - Do not add a web framework, a DI container, an ORM, or an event bus. The raw-`http` dispatch loop is the intended shape.
 - Fix a boundary violation by moving the code, not by widening a rule. Carve-outs in `.dependency-cruiser.cjs` require owner approval and must carry a `comment` naming their removal condition.
 
@@ -58,10 +58,7 @@ ACS, PCM, and CGM are helpers, not product authorities. Use them only to the ext
 
 Pinned versions currently used by repository validation:
 
-- ACS 0.2.0 hot-loader module v0.1.0 @ `3df982adc008b9caa4b3a9991f77486393c9a30b`.
-- PCM 0.7.0 @ `85e6aa7a889b57aeef270213c37258194717e358`.
-- CGM 0.5.12 @ `5c8c5f167098d04cf96fb1fe449880001a1edd14`.
-- OIO 0.1.0 @ `402a46ec9544fddacb8cc366b07c7fc44b096b69`.
+- Agent stack 1.0.4 (`Pukujan/agent-stack-train`) @ `ad6d9d6c4ce2c1e732904abd63b9d517a10d05cb`: one checkout carrying ACS 0.2.0 (hot-loader module v0.1.0), PCM 0.7.0, CGM 0.5.13 and OIO 0.3.0. The certified versions live in the train's `stack-releases.json`; this repo's `stack-manifest.json` follows it.
 
 ## Git and delivery
 
@@ -84,6 +81,10 @@ Pinned versions currently used by repository validation:
 - Required aggregate status is `gates`, covering contract integrity/integration checks,
   type checking, lint, and Ruff. Never claim completion when the requested workflow has
   not actually run.
+- **Close what you finish.** A PR that completes an issue says `Closes #<n>` in its body,
+  one line per issue; `close-on-merge-caller.yml` then closes it on merge. A PR that only
+  advances an issue says `Refs #<n>`. Before filing a new issue log, search open issues and
+  comment on a match instead of filing a duplicate.
 
 ## Dev root hygiene
 
@@ -95,7 +96,7 @@ The dev root (`D:\development` on Windows, `~/development` elsewhere, or whereve
 - To check, run the pinned ACS script: `python <acs>/modules/coordination/multi-agent-hotload/v0.1.0/scripts/dev_root_check.py --dev-root <dev root>`. It prints JSON and exits non-zero when it finds anything other than main checkouts. `--clean` shows a fix and only acts with `--yes`.
 - This repo's PCM workspace mode is `managed-worktrees`, which puts task worktrees inside the checkout, so `dev_root_check.py` reports them as stray worktrees. Until PCM can put them in the ACS cache, prefer sequential work in the main checkout and remove a task worktree as soon as its PR merges.
 
-Paste this at session boot along with the CGM `system_block` (it comes from the ACS hotloader's `PROMPT_INJECT.md` at `38f8f52`):
+Paste this at session boot along with the CGM `system_block` (it comes from the ACS hotloader's `PROMPT_INJECT.md` at the pinned stack commit):
 
 ```
 Dev root hygiene (ACS): the dev root (ACS_DEV_ROOT; default D:\development on Windows, ~/development elsewhere) holds exactly one main checkout per repo. Never create git worktrees, dependency or sibling clones, scratch folders, or caches there. Put them under the ACS cache instead: %LOCALAPPDATA%\acs\{deps,scratch,worktrees} on Windows, ~/.cache/acs/{deps,scratch,worktrees} on macOS/Linux (ACS_CACHE_DIR overrides). Check with scripts/dev_root_check.py.

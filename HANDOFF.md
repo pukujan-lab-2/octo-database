@@ -16,10 +16,7 @@ Do not claim a queued job executed or a branch-only file is installed.
 
 ## Helpers
 
-- ACS 0.2.0 (hot-loader module v0.1.0): `3df982adc008b9caa4b3a9991f77486393c9a30b`.
-- PCM 0.7.0: `85e6aa7a889b57aeef270213c37258194717e358`.
-- CGM 0.5.12: `5c8c5f167098d04cf96fb1fe449880001a1edd14`, all eight modules.
-- OIO 0.1.0: `402a46ec9544fddacb8cc366b07c7fc44b096b69`.
+- Agent stack 1.0.1 (`Pukujan/agent-stack-train`): `2e32f2c5ef010e784a28253e88e4aeeadf9cba5f`. One checkout with ACS 0.2.0 (hot-loader module v0.1.0), PCM 0.7.0, CGM 0.5.13 (all eight modules) and OIO 0.3.0.
 
 Use helper coordination and continuity to support delivery. The owner retains product authority.
 Use multiple Luna workers for independent work where available; the main agent integrates and verifies results.

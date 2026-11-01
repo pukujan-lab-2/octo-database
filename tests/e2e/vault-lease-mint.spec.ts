@@ -33,6 +33,7 @@ test.describe('vault working keys', () => {
     request,
   }) => {
     const session = await createGuest(request);
+    const storedSecret = `fish-${randomUUID()}`;
 
     const stored = await request.post('/api/vault/items', {
       headers: bearer(session.sessionToken),
@@ -40,7 +41,7 @@ test.describe('vault working keys', () => {
         label: 'Fish Audio',
         description: 'TTS vendor key.',
         kind: 'token',
-        secret: `fish-${randomUUID()}`,
+        secret: storedSecret,
         confirmSecret: CONFIRM_SECRET,
       },
     });
@@ -74,6 +75,9 @@ test.describe('vault working keys', () => {
     };
     expect(cabinetBody.items[0]?.routes[0]?.routeKey).toBe(routeKey);
     expect(cabinetBody.items[0]?.routes[0]?.url).toContain(`/api/vault/relay/${routeKey}`);
+
+    // The inventory names the item without disclosing its secret.
+    expect(JSON.stringify(cabinetBody)).not.toContain(storedSecret);
 
     const lease = await request.post('/api/vault/open/lease', {
       headers: bearer(grantSecret),
@@ -127,5 +131,104 @@ test.describe('vault working keys', () => {
       data: { itemId },
     });
     expect(decoyLease.status()).toBe(403);
+  });
+
+  test('a working key is a free-form credential: no route is required or invented', async ({ request }) => {
+    const session = await createGuest(request);
+
+    const bare = await request.post('/api/vault/items', {
+      headers: bearer(session.sessionToken),
+      data: {
+        label: 'Bare token',
+        description: 'A token with nowhere to send it.',
+        kind: 'token',
+        secret: `bare-${randomUUID()}`,
+        confirmSecret: CONFIRM_SECRET,
+      },
+    });
+    expect(bare.status()).toBe(201);
+    const bareId = ((await bare.json()) as { item: { id: string } }).item.id;
+
+    const withUrl = await request.post('/api/vault/items', {
+      headers: bearer(session.sessionToken),
+      data: {
+        label: 'Url token',
+        description: 'A token that carries its own base url.',
+        kind: 'token',
+        url: 'https://api.inferhub.dev/v1',
+        secret: `url-${randomUUID()}`,
+        confirmSecret: CONFIRM_SECRET,
+      },
+    });
+    expect(withUrl.status()).toBe(201);
+    const urlId = ((await withUrl.json()) as { item: { id: string } }).item.id;
+
+    const minted = await request.post('/api/vault/grants', {
+      headers: bearer(session.sessionToken),
+      data: { name: 'routes', expiresInHours: 10, confirmSecret: CONFIRM_SECRET },
+    });
+    const grantSecret = ((await minted.json()) as { rawSecret: string }).rawSecret;
+
+    // A bare token mints immediately: the caller names the upstream per request.
+    const bareLease = await request.post('/api/vault/open/lease', {
+      headers: bearer(grantSecret),
+      data: { itemId: bareId },
+    });
+    expect(bareLease.status()).toBe(201);
+    const bareBody = (await bareLease.json()) as {
+      proxy: { url: string; targetHeader: string; defaultTarget: string | null };
+      routes: unknown[];
+    };
+    expect(bareBody.proxy.url).toContain('/api/vault/proxy');
+    expect(bareBody.proxy.targetHeader).toBe('x-octo-target');
+    expect(bareBody.proxy.defaultTarget).toBeNull();
+    expect(bareBody.routes).toHaveLength(0);
+
+    // A grant cannot reach the owner-only item and route endpoints.
+    const ownerOnly = await request.get(`/api/vault/items/${bareId}`, { headers: bearer(grantSecret) });
+    expect(ownerOnly.status()).toBe(403);
+
+    // No route was invented behind the owner's back.
+    const bareRoutes = await request.get(`/api/vault/items/${bareId}/routes`, {
+      headers: bearer(session.sessionToken),
+    });
+    expect(((await bareRoutes.json()) as { routes: unknown[] }).routes).toHaveLength(0);
+
+    // A lease-time recipe is stored on the lease itself, not turned into a route.
+    const leased = await request.post('/api/vault/open/lease', {
+      headers: bearer(grantSecret),
+      data: {
+        itemId: bareId,
+        expiresInDays: 1,
+        baseUrl: 'https://api.vendor.test/v1',
+        authScheme: 'x-api-key',
+        authHeader: 'X-Api-Key',
+      },
+    });
+    expect(leased.status()).toBe(201);
+    const leasedBody = (await leased.json()) as {
+      proxy: { defaultTarget: string | null };
+      routes: unknown[];
+    };
+    expect(leasedBody.proxy.defaultTarget).toBe('https://api.vendor.test/v1');
+    expect(leasedBody.routes).toHaveLength(0);
+
+    const persisted = await request.get(`/api/vault/items/${bareId}/routes`, {
+      headers: bearer(session.sessionToken),
+    });
+    expect(((await persisted.json()) as { routes: unknown[] }).routes).toHaveLength(0);
+
+    // An item's own url becomes the default target, not a persisted route.
+    const derived = await request.post('/api/vault/open/lease', {
+      headers: bearer(grantSecret),
+      data: { itemId: urlId },
+    });
+    expect(derived.status()).toBe(201);
+    const derivedBody = (await derived.json()) as {
+      proxy: { defaultTarget: string | null };
+      routes: unknown[];
+    };
+    expect(derivedBody.proxy.defaultTarget).toBe('https://api.inferhub.dev/v1');
+    expect(derivedBody.routes).toHaveLength(0);
   });
 });

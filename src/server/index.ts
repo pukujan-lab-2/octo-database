@@ -5,8 +5,12 @@
  * Executes all data mutations directly in PostgreSQL and Cloudflare R2.
  */
 
+import { handleAnalyticsRoutes } from '../routes/analytics';
+import { handleTracesRoutes } from '../routes/traces';
+import { handleUxAnalyticsRoutes } from '../routes/ux-analytics';
 import { handleAuthRoutes } from '../routes/auth';
 import { handleCapabilitiesRoutes } from '../routes/capabilities';
+import { handleServicesRoutes } from '../routes/services';
 import { handleEpistemicRoutes } from '../routes/epistemic';
 import { handleFilesRoutes } from '../routes/files';
 import { handleGalleryRoutes } from '../routes/gallery';
@@ -65,12 +69,16 @@ const ROUTES: RouteHandler[] = [
   handleVaultRoutes,
   handleSharesRoutes,
   handleCapabilitiesRoutes,
+  handleServicesRoutes,
   handleJobsRoutes,
   handleOpsRoutes,
   handleRagRoutes,
   handleEpistemicRoutes,
   handleGraphRoutes,
   handleWorkspaceQueryRoutes,
+  handleAnalyticsRoutes,
+  handleTracesRoutes,
+  handleUxAnalyticsRoutes,
   handleStaticRoutes,
 ];
 

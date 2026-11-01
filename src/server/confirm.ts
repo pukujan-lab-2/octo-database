@@ -4,7 +4,13 @@
  */
 
 import { hashApiKeySecret } from '../api/keys';
-import { acceptConfirmChallenge, hasConfirmChallenge } from '../auth/confirm-challenge';
+import {
+  acceptConfirmChallenge,
+  hasConfirmChallenge,
+  inConfirmWindow,
+  issueConfirmChallenge,
+  openConfirmWindow,
+} from '../auth/confirm-challenge';
 import { decryptSecret, hashRecoveryCode, verifyTotpCode } from '../lib/mfa';
 import { AuthContext } from './auth-context';
 import { dbConsumeMfaRecoveryCode, dbGetConfirmSecretHash, dbGetMfa, MfaRecord } from './db';
@@ -23,9 +29,14 @@ import { ServerResponse } from 'http';
  * TOTP code (or a one-time recovery code) is additionally required. A used
  * recovery code is consumed. Principals without MFA enrolled are unaffected.
  *
- * Fails closed: an account that never set a secret refuses with
- * CONFIRM_SECRET_NOT_SET rather than falling open. Returns true when the request
- * may proceed, having already written the refusal response otherwise.
+ * An account that never set a secret is gated by the one-time code alone; when
+ * no live code exists (the server restarted since it was shown) a fresh one is
+ * issued instead of demanding setup the person did not ask for. Returns true
+ * when the request may proceed, having already written the refusal response
+ * otherwise.
+ *
+ * Passing the full gate opens a two-minute window in which the same person's
+ * further gated actions need no codes.
  */
 export async function confirmGate(
   res: ServerResponse,
@@ -33,6 +44,9 @@ export async function confirmGate(
   suppliedSecret: unknown,
   options: { requireMfa?: boolean; mfaCode?: unknown } = {}
 ): Promise<boolean> {
+  // The owner listed this agent's key; it confirms on the owner's behalf.
+  if (auth.ownerAgent) return true;
+
   if (auth.apiKey) {
     sendJson(res, 403, {
       error: 'FORBIDDEN: Destructive commands require a human session; API keys can never confirm.',
@@ -40,6 +54,24 @@ export async function confirmGate(
     return false;
   }
 
+  // Codes that are sent are always checked; only a request that sends none uses the window.
+  if (!hasValue(suppliedSecret) && !hasValue(options.mfaCode) && inConfirmWindow(auth.principal.id)) return true;
+
+  const passed = await checkCodes(res, auth, suppliedSecret, options);
+  if (passed) openConfirmWindow(auth.principal.id);
+  return passed;
+}
+
+function hasValue(value: unknown): boolean {
+  return typeof value === 'string' ? value.trim() !== '' : value !== undefined && value !== null;
+}
+
+async function checkCodes(
+  res: ServerResponse,
+  auth: AuthContext,
+  suppliedSecret: unknown,
+  options: { requireMfa?: boolean; mfaCode?: unknown }
+): Promise<boolean> {
   if (acceptConfirmChallenge(auth.principal.id, suppliedSecret)) {
     return confirmMfa(res, auth, options);
   }
@@ -51,8 +83,11 @@ export async function confirmGate(
 
   const stored = await dbGetConfirmSecretHash(auth.principal.id);
   if (!stored) {
-    sendJson(res, 412, {
-      error: 'CONFIRM_SECRET_NOT_SET: Set a confirmation secret via POST /api/me/confirm-secret first.',
+    // Pending codes live in memory, so a restart drops the one on screen. Issue
+    // a new one and let the client re-read it rather than dead-ending on setup.
+    issueConfirmChallenge(auth.principal.id);
+    sendJson(res, 403, {
+      error: 'CONFIRM_CODE_INVALID: That code expired. Type the new code shown on the form.',
     });
     return false;
   }

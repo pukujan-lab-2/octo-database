@@ -73,6 +73,10 @@ services:
       # protects the host.
       REDIS_ARGS: "--requirepass ${OCTO_GRAPH_PASSWORD:-graphpassword} --maxmemory ${OCTO_GRAPH_MAXMEMORY:-768mb}"
     mem_limit: ${OCTO_GRAPH_MEMORY_LIMIT:-1g}
+    volumes:
+      # Keeps the save file across a recreate (image update, --force-recreate).
+      # Postgres stays canonical; this only spares a rebuild.
+      - octo-graph-data:/var/lib/falkordb/data
     networks:
       - octo-internal
 
@@ -116,3 +120,5 @@ volumes:
     name: octo-db-data
   octo-file-data:
     name: octo-file-data
+  octo-graph-data:
+    name: octo-graph-data

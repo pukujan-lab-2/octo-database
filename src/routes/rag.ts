@@ -6,12 +6,17 @@
  */
 
 import { embedTexts, loadEmbeddingConfigFromEnv } from '../rag/embeddings';
+import { RAG_CHUNKER, RAG_CHUNK_OVERLAP, RAG_CHUNK_SIZE, RAG_MODEL_VERSION, embedInBatches, ragChunkConfig } from '../rag/ingest';
 import { chunkKey, chunkText, contentHash, extractText } from '../rag/pipeline';
+import { applyRerankScores, loadRerankConfigFromEnv, rerankCandidateCount, rerankScores } from '../rag/rerank';
 import { authenticateRequest, keyWorkspaceMatches, requireScope, roleAllows, scopeDenied } from '../server/auth-context';
-import { dbDeleteDocument, dbEnsureEmbeddingConfig, dbGetDocument, dbGetWorkspaceMembership, dbListDocuments, dbMatchChunks, dbRenameDocument, dbReplaceChunksAndEmbeddings, dbUpsertDocumentVersion, query } from '../server/db';
+import { dbDeleteDocument, dbEnqueueJob, dbEnsureEmbeddingConfig, dbGetArchiveRecord, dbGetDocument, dbGetWorkspaceMembership, dbListDocuments, dbMatchChunksHybrid, dbRenameDocument, dbReplaceChunksAndEmbeddings, dbUpsertDocumentVersion, query } from '../server/db';
 import { readJsonObject, requireUuid, sendJson } from '../server/http';
 import { attributeAgentAction } from '../server/ops';
 import { IncomingMessage, ServerResponse } from 'http';
+import { randomUUID } from 'crypto';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function handleRagRoutes(
   req: IncomingMessage,
@@ -36,13 +41,14 @@ export async function handleRagRoutes(
     // Authorize before probing provider configuration: an unauthorized caller
     // must not learn whether embeddings are configured.
     const parsed = (await readJsonObject(req)) as Record<string, any>;
-    const { workspaceId, title, text, mimeType } = parsed;
+    const { workspaceId, title, text, mimeType, fileId } = parsed;
 
-    if (!workspaceId || !title || typeof text !== 'string') {
-      sendJson(res, 400, { error: 'workspaceId, title, and text are required' });
+    if (!workspaceId || (!fileId && (!title || typeof text !== 'string'))) {
+      sendJson(res, 400, { error: 'workspaceId and either fileId, or title and text, are required' });
       return true;
     }
     if (!requireUuid(res, workspaceId, 'workspaceId')) return true;
+    if (fileId && !requireUuid(res, fileId, 'fileId')) return true;
 
     if (!keyWorkspaceMatches(auth, workspaceId)) {
       sendJson(res, 403, { error: 'FORBIDDEN: Key restricted to different workspace' });
@@ -63,6 +69,26 @@ export async function handleRagRoutes(
       return true;
     }
 
+    // An uploaded file (PDF, text) is indexed by the queue worker: reading a PDF
+    // page by page can take minutes, so the caller gets the job to poll.
+    if (fileId) {
+      const file = await dbGetArchiveRecord(workspaceId, fileId);
+      if (!file) {
+        sendJson(res, 404, { error: 'NOT_FOUND: file not found in this workspace' });
+        return true;
+      }
+      const { job } = await dbEnqueueJob(
+        randomUUID(),
+        workspaceId,
+        'rag_ingest_file',
+        `rag:${fileId}:${randomUUID()}`,
+        { fileId, ...(typeof title === 'string' && title ? { title } : {}) },
+        auth.principal.id
+      );
+      sendJson(res, 202, { jobId: job.id, state: job.state, fileId });
+      return true;
+    }
+
     const bytes = Buffer.from(text, 'utf-8');
     const resolvedMime = mimeType ?? 'text/plain';
     const extracted = extractText(resolvedMime, bytes);
@@ -77,11 +103,11 @@ export async function handleRagRoutes(
     const configId = await dbEnsureEmbeddingConfig(
       workspaceId,
       embeddingConfig.model,
-      'v1',
+      RAG_MODEL_VERSION,
       embeddingConfig.dimensions,
-      'paragraph-aware',
-      800,
-      100
+      RAG_CHUNKER,
+      RAG_CHUNK_SIZE,
+      RAG_CHUNK_OVERLAP
     );
 
     const version = await dbUpsertDocumentVersion(
@@ -105,19 +131,12 @@ export async function handleRagRoutes(
       return true;
     }
 
-    const chunks = chunkText(extracted, {
-      model: embeddingConfig.model,
-      modelVersion: 'v1',
-      dimensions: embeddingConfig.dimensions,
-      chunker: 'paragraph-aware',
-      chunkSize: 800,
-      chunkOverlap: 100,
-    }).map((c) => ({
+    const chunks = chunkText(extracted, ragChunkConfig(embeddingConfig)).map((c) => ({
       ...c,
       chunkKey: chunkKey(version.versionId, configId, c.chunkIndex),
     }));
 
-    const { vectors } = await embedTexts(embeddingConfig, chunks.map((c) => c.content));
+    const vectors = await embedInBatches(embeddingConfig, chunks.map((c) => c.content));
     const written = await dbReplaceChunksAndEmbeddings(
       workspaceId,
       version.versionId,
@@ -150,13 +169,34 @@ export async function handleRagRoutes(
     }
 
     const parsed = (await readJsonObject(req)) as Record<string, any>;
-    const { workspaceId, query, limit } = parsed;
+    const { workspaceId, query, limit, filter, rerank } = parsed;
 
     if (!workspaceId || !query) {
       sendJson(res, 400, { error: 'workspaceId and query are required' });
       return true;
     }
     if (!requireUuid(res, workspaceId, 'workspaceId')) return true;
+    if (rerank !== undefined && typeof rerank !== 'boolean') {
+      sendJson(res, 400, { error: 'rerank must be a boolean' });
+      return true;
+    }
+
+    // Optional filter (issue #364), applied inside the search before its limit.
+    const documentIds = filter?.documentIds;
+    const titlePrefix = filter?.titlePrefix;
+    const latestVersionOnly = filter?.latestVersionOnly;
+    if (
+      (filter !== undefined && (typeof filter !== 'object' || filter === null || Array.isArray(filter))) ||
+      (documentIds !== undefined &&
+        (!Array.isArray(documentIds) || !documentIds.every((id: unknown) => typeof id === 'string' && UUID_RE.test(id)))) ||
+      (titlePrefix !== undefined && typeof titlePrefix !== 'string') ||
+      (latestVersionOnly !== undefined && typeof latestVersionOnly !== 'boolean')
+    ) {
+      sendJson(res, 400, {
+        error: 'filter must be { documentIds?: uuid[], titlePrefix?: string, latestVersionOnly?: boolean }',
+      });
+      return true;
+    }
 
     if (!keyWorkspaceMatches(auth, workspaceId)) {
       sendJson(res, 403, { error: 'FORBIDDEN: Key restricted to different workspace' });
@@ -179,14 +219,47 @@ export async function handleRagRoutes(
       return true;
     }
 
+    // Rerank is on by default wherever a reranker is configured; `rerank: false`
+    // skips it, and an explicit `rerank: true` without one is an error.
+    const rerankConfig = rerank === false ? null : loadRerankConfigFromEnv();
+    if (rerank === true && !rerankConfig) {
+      sendJson(res, 503, { error: 'RERANK_NOT_CONFIGURED: set OCTO_RERANK_URL to rerank results' });
+      return true;
+    }
+
+    const matchLimit = limit ?? 10;
     const { vectors } = await embedTexts(embeddingConfig, [query]);
-    const results = await dbMatchChunks(workspaceId, vectors[0]!, limit ?? 10, 0);
+    let results: Array<Awaited<ReturnType<typeof dbMatchChunksHybrid>>[number] & { rerankScore?: number }> =
+      await dbMatchChunksHybrid(
+        workspaceId,
+        query,
+        vectors[0]!,
+        rerankConfig ? rerankCandidateCount(matchLimit) : matchLimit,
+        { documentIds, titlePrefix, latestVersionOnly }
+      );
+
+    // Rerank (issue #365): re-score the wider candidate set, then cut to
+    // the limit. When no reranker answers, the hybrid order is kept.
+    let reranked = false;
+    if (rerankConfig) {
+      const scores = await rerankScores(rerankConfig, query, results.map((r) => r.content));
+      if (scores) {
+        results = applyRerankScores(results, scores);
+        reranked = true;
+      }
+      results = results.slice(0, matchLimit);
+    }
 
     sendJson(res, 200, {
       query,
+      // Hybrid: a lexical (full-text) arm and a vector arm, fused with RRF. Each
+      // match reports which arms found it -- `similarity` is null for a chunk only
+      // the lexical arm returned, `lexicalScore` null for a vector-only match.
+      mode: 'hybrid',
+      ...(rerankConfig ? { reranked } : {}),
       matches: results,
-      // Provenance: each match carries the version and the exact embedding/chunker
-      // configuration that produced it.
+      // Provenance: each match carries its document, title, version, page (PDFs),
+      // and the exact embedding/chunker configuration that produced it.
     });
     return true;
   }

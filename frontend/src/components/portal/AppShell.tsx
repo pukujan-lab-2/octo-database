@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils";
 import { formatClock } from "@/lib/format";
 import type { Principal, Workspace } from "@/lib/types";
 import {
+  Blocks,
+  ChartColumn,
   ChevronDown,
   Clock,
   FolderOpen,
@@ -18,13 +20,23 @@ import {
   Workflow,
 } from "lucide-react";
 
-export type ViewId = "overview" | "files" | "gallery" | "operations" | "access" | "vault";
+export type ViewId =
+  | "overview"
+  | "files"
+  | "gallery"
+  | "operations"
+  | "analytics"
+  | "services"
+  | "access"
+  | "vault";
 
 export const VIEWS: Array<{ id: ViewId; label: string; icon: typeof LayoutDashboard }> = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "files", label: "Files", icon: FolderOpen },
   { id: "gallery", label: "Gallery", icon: Images },
   { id: "operations", label: "Operations", icon: Workflow },
+  { id: "analytics", label: "Analytics", icon: ChartColumn },
+  { id: "services", label: "Services", icon: Blocks },
   { id: "access", label: "Access", icon: Shield },
   { id: "vault", label: "Keys", icon: KeyRound },
 ];
@@ -181,7 +193,7 @@ export function AppShell({
                   data-testid="workspace-picker"
                   value={workspace?.id ?? ""}
                   onChange={(event) => onSelectWorkspace(event.target.value)}
-                  className="h-9 w-[150px] cursor-pointer appearance-none truncate rounded-md border border-input bg-card pl-3 pr-8 text-sm font-medium text-foreground transition-colors hover:border-ring sm:w-[210px]"
+                  className="h-9 w-[150px] cursor-pointer appearance-none truncate rounded-md border border-input bg-card pl-3 pr-8 text-base font-medium text-foreground transition-colors hover:border-ring sm:w-[210px] sm:text-sm"
                 >
                   {workspaces.length === 0 ? <option value="">No workspaces</option> : null}
                   {workspaces.map((item) => (
@@ -193,7 +205,7 @@ export function AppShell({
                 <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               </div>
 
-              <Button type="button" size="sm" variant="outline" onClick={onNewWorkspace} className="h-9 gap-1.5">
+              <Button type="button" size="sm" variant="outline" onClick={onNewWorkspace} aria-label="New Workspace" className="h-9 gap-1.5">
                 <Plus className="h-4 w-4" />
                 <span className="hidden sm:inline">New Workspace</span>
               </Button>

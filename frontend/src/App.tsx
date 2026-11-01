@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import { DocsPage } from "./pages/DocsPage";
+import { CredentialPlanePage } from "./pages/CredentialPlanePage";
 import { PublicShareViewer } from "./views/PublicShareViewer";
 import { useTheme } from "./hooks/useTheme";
 import { ThemeControls } from "./components/portal/ThemeControls";
@@ -45,6 +47,9 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
+          <Route path="/docs" element={<DocsPage />} />
+          <Route path="/docs/:slug" element={<DocsPage />} />
+          <Route path="/credential-plane" element={<CredentialPlanePage />} />
           {/* Tokens may themselves contain slashes, so the splat is decoded whole. */}
           <Route path="/share/*" element={<ShareRoute />} />
           <Route path="*" element={<NotFound />} />

@@ -22,6 +22,6 @@ jobs:
     if: >-
       github.event.pull_request.merged == true &&
       github.event.pull_request.head.repo.full_name == github.repository
-    uses: Pukujan/agent-stack-train/.github/workflows/close-on-merge.yml@2e32f2c5ef010e784a28253e88e4aeeadf9cba5f
+    uses: Pukujan/agent-stack-train/.github/workflows/close-on-merge.yml@ad6d9d6c4ce2c1e732904abd63b9d517a10d05cb
     with:
-      oio_ref: 2e32f2c5ef010e784a28253e88e4aeeadf9cba5f
+      oio_ref: ad6d9d6c4ce2c1e732904abd63b9d517a10d05cb

@@ -218,7 +218,9 @@ jobs:
         run: |
           set -euo pipefail
           git clone --quiet https://github.com/Pukujan/agent-stack-train.git "$VALIDATION_ROOT/train"
-          git -C "$VALIDATION_ROOT/train" checkout --quiet 2e32f2c5ef010e784a28253e88e4aeeadf9cba5f
+          # Validate at the commit the installer recorded, so an upgrade needs no edit here.
+          STACK_COMMIT=$(python3 -c 'import json; print(json.load(open(".coord/hotload.lock.json"))["stack"]["commit"])')
+          git -C "$VALIDATION_ROOT/train" checkout --quiet "$STACK_COMMIT"
           "$VALIDATION_ROOT/venv/bin/python" "$VALIDATION_ROOT/train/scripts/check_manifest.py" \
             --manifest stack-manifest.json \
             --train "$VALIDATION_ROOT/train/stack-releases.json"

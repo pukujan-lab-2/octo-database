@@ -58,7 +58,7 @@ ACS, PCM, and CGM are helpers, not product authorities. Use them only to the ext
 
 Pinned versions currently used by repository validation:
 
-- Agent stack 1.0.1 (`Pukujan/agent-stack-train`) @ `2e32f2c5ef010e784a28253e88e4aeeadf9cba5f`: one checkout carrying ACS 0.2.0 (hot-loader module v0.1.0), PCM 0.7.0, CGM 0.5.13 and OIO 0.3.0. The certified versions live in the train's `stack-releases.json`; this repo's `stack-manifest.json` follows it.
+- Agent stack 1.0.4 (`Pukujan/agent-stack-train`) @ `ad6d9d6c4ce2c1e732904abd63b9d517a10d05cb`: one checkout carrying ACS 0.2.0 (hot-loader module v0.1.0), PCM 0.7.0, CGM 0.5.13 and OIO 0.3.0. The certified versions live in the train's `stack-releases.json`; this repo's `stack-manifest.json` follows it.
 
 ## Git and delivery
 

@@ -13,7 +13,7 @@ permissions:
 jobs:
   gates:
     name: gates
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, org-pool]
     services:
       postgres:
         # pgvector image: the Slice 8 migration requires the `vector` extension.

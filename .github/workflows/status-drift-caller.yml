@@ -16,6 +16,6 @@ permissions:
 
 jobs:
   drift:
-    uses: Pukujan/agent-stack-train/.github/workflows/oio-status-drift.yml@469c4bfe729df7cdb1ff867b52e13dff5eac17c7
+    uses: Pukujan/agent-stack-train/.github/workflows/oio-status-drift.yml@3d63fcea1b1308adc1f3b4520191cf58cab3ae0f
     with:
-      oio_ref: 469c4bfe729df7cdb1ff867b52e13dff5eac17c7
+      oio_ref: 3d63fcea1b1308adc1f3b4520191cf58cab3ae0f

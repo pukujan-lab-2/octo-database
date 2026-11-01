@@ -45,7 +45,7 @@ services:
   # starts them when the web container's plugin asks (#448). A container started any
   # other way (a deploy, a restart) gets the default 30 minutes before it stops.
   sablier:
-    image: sablierapp/sablier:1.18.0
+    image: sablierapp/sablier:1.19.1
     container_name: octo-sablier
     restart: unless-stopped
     command:

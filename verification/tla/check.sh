@@ -18,6 +18,12 @@ expectations=(
   "FileLifecycle FileLifecycleNoVerify 12"                 # negative control
   "KeyRevocation KeyRevocation 0"
   "KeyRevocation KeyRevocationInFlight 12"                 # finding: in-flight requests finish after revoke
+  "PhoenixGate PhoenixGate 0"
+  "PhoenixGate PhoenixGateInFlight 12"                     # finding: a request that passed the check still forwards after a demotion or expiry
+  "PhoenixGate PhoenixGateNoCheck 12"                      # negative control: without forward_auth the admin token goes to anyone
+  "PhoenixGate PhoenixGateNoOwnerRecheck 12"               # negative control: a demoted owner's cookie would keep working
+  "ToolScope ToolScope 0"
+  "ToolScope ToolScopeListOnly 12"                         # negative control: relying on the tool list alone lets a narrowed key write
 )
 
 meta="$(mktemp -d)"

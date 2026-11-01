@@ -354,6 +354,21 @@ export const OCTO_CAPABILITIES: CapabilityDescriptor[] = [
       'Turn on UX analytics (Umami: clicks, session replays with every form field masked, heatmaps) for the workspace. Body { domain }. Owner or admin. Creates the workspace\'s Umami website once, adds its members, and returns the tracking tags. GET the same path for the current state.',
   },
   {
+    action: 'ux_analytics.status',
+    method: 'GET',
+    path: '/api/workspaces/<id>/ux-analytics',
+    requiredScope: 'read',
+    description: 'Whether UX analytics is on for the workspace, its website id and the tracking tags to add to the app.',
+  },
+  {
+    action: 'ux_analytics.read',
+    method: 'GET',
+    path: '/api/workspaces/<id>/ux-analytics/read/<resource>',
+    requiredScope: 'read',
+    description:
+      'Read the workspace\'s own UX analytics: <resource> is stats, pageviews, metrics, events, sessions, replays or active. Query parameters (startAt and endAt in milliseconds, default the last 7 days; unit, type, limit ...) pass through to Umami. The website is the workspace\'s, never passed by the caller.',
+  },
+  {
     action: 'ux_analytics.link',
     method: 'GET',
     path: '/api/workspaces/<id>/ux-analytics/link',

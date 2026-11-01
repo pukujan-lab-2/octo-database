@@ -6,6 +6,7 @@
  */
 
 import { handleAnalyticsRoutes } from '../routes/analytics';
+import { handlePhoenixSessionRoutes } from '../routes/phoenix-session';
 import { handleTracesRoutes } from '../routes/traces';
 import { handleUxAnalyticsRoutes } from '../routes/ux-analytics';
 import { handleAuthRoutes } from '../routes/auth';
@@ -78,6 +79,7 @@ const ROUTES: RouteHandler[] = [
   handleWorkspaceQueryRoutes,
   handleAnalyticsRoutes,
   handleTracesRoutes,
+  handlePhoenixSessionRoutes,
   handleUxAnalyticsRoutes,
   handleStaticRoutes,
 ];

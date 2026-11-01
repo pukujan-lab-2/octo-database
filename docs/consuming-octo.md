@@ -356,8 +356,38 @@ person) writes the result with `record_eval_scores`, and `read_traces` with
 The viewer link opens Phoenix, which has its own users and login and does not use the
 Octo session. Agents should read through `read_traces` instead of the link.
 
+The platform owner opens the viewer from Octo (Services, Traces and evals) with no
+second login: Octo sets a signed cookie for `/phoenix` from the signed-in session, and the
+web server asks Octo to check it before forwarding to Phoenix. Phoenix shows every
+workspace's project, so this is for the owner only; everyone else reads their own
+workspace through `read_traces`.
+
 Not exposed: Phoenix datasets, experiments and prompts. Phoenix keeps those for the
 whole installation rather than per project, so Octo cannot fence them per workspace.
+
+## UX analytics
+
+Clicks, session replays (every form field masked) and heatmaps, in a self-hosted Umami,
+one website per workspace.
+
+| To | Call | Scope |
+| --- | --- | --- |
+| Is it on, website id, tracking tags | `GET /api/workspaces/<id>/ux-analytics` or MCP `get_ux_analytics` | `read` |
+| Turn it on (owner or admin) | `POST /api/workspaces/<id>/ux-analytics` `{domain}` or MCP `enable_ux_analytics` | `write` |
+| Read the data | `GET /api/workspaces/<id>/ux-analytics/read/<resource>` or MCP `read_ux_analytics` | `read` |
+| Sign a person in to Umami | `GET /api/workspaces/<id>/ux-analytics/link` | `read` |
+
+`<resource>` is `stats`, `pageviews`, `metrics`, `events`, `sessions`, `replays` or
+`active`. The window defaults to the last 7 days; `startAt` and `endAt` are milliseconds,
+and `unit`, `type` and `limit` pass through to Umami. The website is always the
+workspace's own.
+
+## Which MCP tool fits a need
+
+The MCP `guide` tool has a `recipes` topic that maps a need to its tools (store rows,
+search documents, relationships, beliefs over time, totals, a failed run, traces and
+evals, UX analytics, files) and one topic per surface for the details. The connect-time
+instructions name the topics, so an agent reads only the ones it needs.
 
 ## The vault: three token families, and what each one can see
 

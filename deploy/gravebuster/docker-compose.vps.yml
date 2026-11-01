@@ -30,6 +30,12 @@ services:
   # forwards them here into the workspace's project. Its data lives in its own
   # `phoenix` database on octo-db. Traces older than the retention policy are
   # deleted by Phoenix itself.
+  # The web server adds Phoenix's admin token for a request Octo has authorized
+  # (Caddyfile, /phoenix). Same value Octo's API uses to reach Phoenix.
+  octo-web:
+    environment:
+      OCTO_PHOENIX_SECRET: ${OCTO_PHOENIX_SECRET}
+
   octo-phoenix:
     image: arizephoenix/phoenix:version-20.27.0
     container_name: octo-phoenix

@@ -187,8 +187,17 @@ export const ROUTE_TABLE: RouteSpec[] = [
   { method: 'GET', path: '/api/workspaces/:ws/otel/read/trace_annotations', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/traces.ts' },
   { method: 'GET', path: '/api/workspaces/:ws/otel/read/session_annotations', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/traces.ts' },
   { method: 'GET', path: '/api/workspaces/:ws/otel/read/annotation_configs', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/traces.ts' },
+  { method: 'POST', path: '/api/phoenix/session', tenancy: 'session', scope: null, source: 'src/routes/phoenix-session.ts' },
+  { method: 'GET', path: '/api/phoenix/auth', tenancy: 'token', scope: null, source: 'src/routes/phoenix-session.ts' },
   { method: 'GET', path: '/api/workspaces/:ws/ux-analytics', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/ux-analytics.ts' },
   { method: 'GET', path: '/api/workspaces/:ws/ux-analytics/link', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/ux-analytics.ts' },
+  { method: 'GET', path: '/api/workspaces/:ws/ux-analytics/read/stats', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/ux-analytics.ts' },
+  { method: 'GET', path: '/api/workspaces/:ws/ux-analytics/read/pageviews', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/ux-analytics.ts' },
+  { method: 'GET', path: '/api/workspaces/:ws/ux-analytics/read/metrics', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/ux-analytics.ts' },
+  { method: 'GET', path: '/api/workspaces/:ws/ux-analytics/read/events', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/ux-analytics.ts' },
+  { method: 'GET', path: '/api/workspaces/:ws/ux-analytics/read/sessions', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/ux-analytics.ts' },
+  { method: 'GET', path: '/api/workspaces/:ws/ux-analytics/read/replays', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/ux-analytics.ts' },
+  { method: 'GET', path: '/api/workspaces/:ws/ux-analytics/read/active', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/ux-analytics.ts' },
   { method: 'POST', path: '/api/workspaces/:ws/ux-analytics', tenancy: 'workspace', scope: 'write', ws: 'path', source: 'src/routes/ux-analytics.ts' },
 ];
 

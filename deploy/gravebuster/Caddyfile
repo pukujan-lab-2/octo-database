@@ -24,9 +24,17 @@
         reverse_proxy octo-api:3001
     }
 
-    # Phoenix trace viewer (docker-compose.vps.yml). It has its own login.
+    # Phoenix trace viewer (docker-compose.vps.yml). The platform owner opens it from
+    # Octo with no second login: Octo sets a signed cookie (POST /api/phoenix/session),
+    # Octo checks it here (forward_auth), and only then does this block add Phoenix's own
+    # admin token. Without a valid cookie the request stops at the 401 from Octo.
     handle_path /phoenix* {
-        reverse_proxy octo-phoenix:6006
+        forward_auth octo-api:3001 {
+            uri /api/phoenix/auth
+        }
+        reverse_proxy octo-phoenix:6006 {
+            header_up Authorization "Bearer {env.OCTO_PHOENIX_SECRET}"
+        }
     }
 
     handle /health {

@@ -186,6 +186,7 @@ These are true of `main` today. Each is a fact to plan around, not a decision. T
 - **Two concurrent database provisions for one workspace** can both pass the "already provisioned" check; the loser would leave an orphaned database and role.
 - **An archive job can prune bytes an on-demand recall just restored**, leaving the file `active_r2` with no R2 bytes until a restore job runs. Drive keeps its copy.
 - **A request already past authentication finishes after its key is revoked.** Revocation stops new requests only.
+- **A Phoenix request already past the cookie check is still forwarded** if the owner is demoted or the cookie expires just after the check. The next request is refused.
 - **Deleting a workspace leaves its files** in R2 and Drive and reports them as `orphanedObjects`. Deleting an archived file does not delete its Drive copy.
 - **Confirm codes and the two-minute window are in memory**, lost on restart and not shared between processes. Revoking a key needs the `delete` scope but no confirmation.
 - **Google sign-in sends no OAuth `state` parameter**, and reads the `id_token` without checking its signature (it comes straight from Google's token endpoint).

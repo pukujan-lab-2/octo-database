@@ -8,11 +8,27 @@ import { useServices, useTraceLink, useUxAnalytics } from "@/lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import { useState } from "react";
+import { toast } from "@/utils/toast";
 
 /** Hosted services Octo fronts. Each one opens the tool's own UI; Octo builds no
  *  dashboard for them. A service with no URL configured shows as not set up.
  *  Traces open on this workspace's own Phoenix project; UX analytics on its own
  *  Umami website. */
+/** Opens the Phoenix viewer with the Octo session: the server sets a cookie for
+ *  /phoenix first, so there is no second login. Only the platform owner gets it. */
+async function openTraces(url: string) {
+  // Open the tab now, inside the click, so the browser does not block it.
+  const tab = window.open("about:blank", "_blank");
+  try {
+    await api.post("/api/phoenix/session", {});
+    if (tab) tab.location.href = url;
+    else window.location.href = url;
+  } catch (err) {
+    tab?.close();
+    toast.error(errorMessage(err));
+  }
+}
+
 export function ServicesView({ workspaceId, role }: { workspaceId: string; role: string }) {
   const services = useServices();
   const uxReady = Boolean(services.data?.services.some((s) => s.id === "ux" && s.url));
@@ -50,7 +66,11 @@ export function ServicesView({ workspaceId, role }: { workspaceId: string; role:
                   ? `Open ${service.tool} to inspect it.`
                   : `Set the server's URL for ${service.tool} to enable this link.`}
               </span>
-              {service.url ? (
+              {service.url && service.id === "traces" ? (
+                <Button size="sm" onClick={() => void openTraces(service.url ?? "")}>
+                  Open <ExternalLink className="ml-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
+              ) : service.url ? (
                 <Button asChild size="sm">
                   <a href={service.url} target="_blank" rel="noopener noreferrer">
                     Open <ExternalLink className="ml-1.5 h-3.5 w-3.5" aria-hidden="true" />

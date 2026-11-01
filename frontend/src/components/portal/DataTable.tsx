@@ -76,10 +76,7 @@ export function DataTable<T>({
     const column = sort ? columns.find((c) => c.id === sort.id) : undefined;
     if (!sort || !column?.sortValue) return filtered;
     const value = column.sortValue;
-    return [...filtered].sort((a, b) => {
-      const order = compare(value(a), value(b));
-      return sort.desc ? -order : order;
-    });
+    return [...filtered].sort((a, b) => compare(value(a), value(b), sort.desc));
   }, [rows, columns, search, filters, sort]);
 
   const pages = Math.max(1, Math.ceil(visible.length / pageSize));
@@ -121,7 +118,7 @@ export function DataTable<T>({
               aria-label={`Filter by ${column.header}`}
               className="h-8 rounded-md border border-input bg-background px-2 text-xs"
             >
-              <option value="">All {column.header.toLowerCase()}</option>
+              <option value="">{column.header}: any</option>
               {(filterOptions[column.id] ?? []).map((option) => (
                 <option key={option} value={option}>
                   {option}
@@ -242,11 +239,14 @@ export function DataTable<T>({
   );
 }
 
-/** Empty values sort last; numbers numerically; everything else as text. */
-function compare(a: SortValue, b: SortValue): number {
+/** Empty values sort last in either direction; numbers numerically; everything else as text. */
+function compare(a: SortValue, b: SortValue, desc: boolean): number {
   const aEmpty = a == null || a === "";
   const bEmpty = b == null || b === "";
   if (aEmpty || bEmpty) return aEmpty === bEmpty ? 0 : aEmpty ? 1 : -1;
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  return String(a).localeCompare(String(b), undefined, { numeric: true });
+  const order =
+    typeof a === "number" && typeof b === "number"
+      ? a - b
+      : String(a).localeCompare(String(b), undefined, { numeric: true });
+  return desc ? -order : order;
 }

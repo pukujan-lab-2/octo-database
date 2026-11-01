@@ -861,16 +861,19 @@ export interface KeyUseSummaryRow {
 }
 
 /** A principal's key uses, one row per key, IP, method, route and outcome; newest first. */
+// Ids in a path become :id, so /api/vault/items/<uuid> calls group as one route.
 export async function dbListKeyUseSummary(principalId: string, limit = 2000): Promise<KeyUseSummaryRow[]> {
   return queryService<KeyUseSummaryRow>(
     `SELECT u.key_id AS "keyId", k.name AS "keyName", coalesce(k.prefix, r.prefix) AS "keyPrefix",
-            u.source_ip AS "sourceIp", u.method, u.route, u.outcome,
+            u.source_ip AS "sourceIp", u.method,
+            regexp_replace(u.route, '/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', '/:id', 'g') AS route,
+            u.outcome,
             count(*)::int AS uses, min(u.used_at) AS "firstUsedAt", max(u.used_at) AS "lastUsedAt"
        FROM octo.agent_key_uses u
        LEFT JOIN octo.api_keys k ON k.id = u.key_id
        LEFT JOIN octo.revoked_api_keys r ON r.key_id = u.key_id
       WHERE u.principal_id = $1
-      GROUP BY u.key_id, k.name, k.prefix, r.prefix, u.source_ip, u.method, u.route, u.outcome
+      GROUP BY 1, 2, 3, 4, 5, 6, 7
       ORDER BY max(u.used_at) DESC
       LIMIT $2`,
     [principalId, limit]

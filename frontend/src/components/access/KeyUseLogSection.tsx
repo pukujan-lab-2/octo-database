@@ -3,9 +3,14 @@ import { DataTable, type DataColumn } from "@/components/portal/DataTable";
 import { EmptyState, ErrorState } from "@/components/portal/EmptyState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { errorMessage } from "@/lib/api";
-import { formatCount, formatDateTime, formatRelative } from "@/lib/format";
+import { formatCount, formatDate, formatDateTime, formatRelative } from "@/lib/format";
 import { useKeyUses } from "@/lib/queries";
 import type { KeyUseSummaryRow } from "@/lib/types";
+
+/** Shows an IPv4 address the server saw as IPv6-mapped (::ffff:1.2.3.4) as plain IPv4. */
+function displayIp(ip: string | null): string {
+  return ip ? ip.replace(/^::ffff:/, "") : "unknown";
+}
 
 const OUTCOME_TONE = { ok: "success", revoked: "danger", expired: "warning" } as const;
 
@@ -27,8 +32,12 @@ const COLUMNS: DataColumn<KeyUseSummaryRow>[] = [
     id: "ip",
     header: "Source IP",
     sortValue: (row) => row.sourceIp,
-    filterValue: (row) => row.sourceIp ?? "unknown",
-    cell: (row) => <span className="num whitespace-nowrap text-xs">{row.sourceIp ?? "—"}</span>,
+    filterValue: (row) => displayIp(row.sourceIp),
+    cell: (row) => (
+      <p className="num max-w-[200px] truncate text-xs" title={row.sourceIp ?? undefined}>
+        {displayIp(row.sourceIp)}
+      </p>
+    ),
   },
   {
     id: "method",
@@ -42,7 +51,7 @@ const COLUMNS: DataColumn<KeyUseSummaryRow>[] = [
     header: "Route",
     sortValue: (row) => row.route,
     cell: (row) => (
-      <p className="num max-w-[340px] truncate text-xs" title={row.route}>
+      <p className="num max-w-[280px] truncate text-xs" title={row.route}>
         {row.route}
       </p>
     ),
@@ -66,19 +75,14 @@ const COLUMNS: DataColumn<KeyUseSummaryRow>[] = [
     cell: (row) => <span className="num text-xs">{formatCount(row.uses)}</span>,
   },
   {
-    id: "first",
-    header: "First seen",
-    sortValue: (row) => row.firstUsedAt,
-    cell: (row) => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(row.firstUsedAt)}</span>,
-  },
-  {
     id: "last",
     header: "Last seen",
     sortValue: (row) => row.lastUsedAt,
     cell: (row) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground" title={formatDateTime(row.lastUsedAt)}>
-        {formatRelative(row.lastUsedAt)}
-      </span>
+      <div className="whitespace-nowrap" title={`First ${formatDateTime(row.firstUsedAt)}\nLast ${formatDateTime(row.lastUsedAt)}`}>
+        <p className="text-xs">{formatRelative(row.lastUsedAt)}</p>
+        <p className="text-[11px] text-muted-foreground">since {formatDate(row.firstUsedAt)}</p>
+      </div>
     ),
   },
 ];

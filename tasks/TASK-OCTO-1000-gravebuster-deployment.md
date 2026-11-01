@@ -189,3 +189,26 @@ Blocked/uncertain:
 
 Next:
 - Owner to choose which TLA+ findings to fix (restore without archive_hash is the one that can lose bytes); open feature issues #400 #399 #395 #393 #391 #385 #410
+
+### 2026-11-01 09:19:33 UTC — claude-code
+
+<!-- continuity:checkpoint {"agent":"claude-code","blocked":[],"changed":["none"],"completed":["Removed Octo's own Sablier; octo-web joins the host's shared sablier network; session_duration 10m (#453)"],"decisions":["Owner: server-management owns Sablier on the VPS (Pukujan-lab/server-management#85)"],"evidence":["compose config and caddy validate on the VPS; shared Sablier live and answering octo-web at 09:14 UTC"],"next_action":"Merge #454, then promote main to production","protocol_version":"0.1.0-draft","schema":"project-continuity.checkpoint.v1","task_id":"OCTO-1000","timestamp":"2026-11-01T09:19:33Z"} -->
+<!-- continuity:checkpoint-operation {"payload_sha256":"37cd4b6dc7ecd73260628e56bb6cd05886d8ca9128188bae2d01f45586f9ed04","request_id":"d48784bb2b864f7b972b68fc2439962a","schema":"project-continuity.checkpoint-operation.v1","task_id":"OCTO-1000"} -->
+
+Completed:
+- Removed Octo's own Sablier; octo-web joins the host's shared sablier network; session_duration 10m (#453)
+
+Evidence:
+- compose config and caddy validate on the VPS; shared Sablier live and answering octo-web at 09:14 UTC
+
+Decisions:
+- Owner: server-management owns Sablier on the VPS (Pukujan-lab/server-management#85)
+
+Changed:
+- none
+
+Blocked/uncertain:
+- none
+
+Next:
+- Merge #454, then promote main to production

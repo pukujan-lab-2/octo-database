@@ -98,7 +98,7 @@ A workspace registers Parquet datasets stored at `workspaces/<ws>/lake/<slug>/v<
 
 ### UX analytics
 
-`POST /api/workspaces/:id/ux-analytics/enable` (owner or admin) creates an Umami team and website for the workspace, with replay masking on, and makes each member a Umami user. Owner and admin become team managers, operator a team member, member view-only (`src/lib/umami.ts`). People open Umami through its SSO link.
+`POST /api/workspaces/:id/ux-analytics` (owner or admin) creates an Umami team and website for the workspace, with replay masking on, and makes each member a Umami user. Owner and admin become team managers, operator a team member, member view-only (`src/lib/umami.ts`). People open Umami through its SSO link.
 
 ### Vault
 
@@ -155,7 +155,7 @@ One direction only; a lower layer never imports a higher one.
 
 | You are adding | Put it in |
 |---|---|
-| An HTTP endpoint | `src/routes/<family>.ts`, plus one line in `ROUTES` if the family is new |
+| An HTTP endpoint | `src/routes/<family>.ts`, plus one line in `ROUTES` if the family is new, plus a row in `tests/e2e/route-table.ts` (a unit test fails without it; the row gets the endpoint its isolation tests) |
 | Business logic | `src/<domain>/<name>-service.ts` |
 | SQL | `src/server/db.ts` (a `db/<domain>.ts` store once the split lands), imported through `src/server/db` |
 | A request/response helper | `src/server/http.ts` |

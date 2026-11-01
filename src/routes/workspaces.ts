@@ -210,7 +210,9 @@ export async function handleWorkspacesRoutes(
   // Destructive: owner-only, gated on the human confirmation secret plus the
   // typed slug, and refused while any file is mid-archive so a copy in flight
   // cannot be orphaned.
-  if (pathname.startsWith('/api/workspaces/') && req.method === 'DELETE') {
+  // Only /api/workspaces/<id>: deeper DELETEs (analytics schedules) belong to
+  // their own route family further down ROUTES.
+  if (/^\/api\/workspaces\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
     const auth = await authenticateRequest(req);
     if (!auth) {
       sendJson(res, 401, { error: 'UNAUTHENTICATED' });

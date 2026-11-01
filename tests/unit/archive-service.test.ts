@@ -183,6 +183,7 @@ describe('archiveFile', () => {
     expect(h.active.objects.has('workspaces/ws-1/f-1/photo.png')).toBe(true);
     expect(h.archive.objects.size).toBe(1);
     expect(h.transitions.at(-1)!.archiveState).toBe('reconciliation_required');
+    expect(h.transitions.at(-1)!.archiveHash).toBe(sha256(Buffer.from('original')));
   });
 
   it('does not delete the source when the upload fails', async () => {
@@ -293,6 +294,26 @@ describe('restoreFile', () => {
     expect(result.reconciliationRequired).toBe(true);
     // The bad bytes must not land in the active tier.
     expect(h.active.objects.has('workspaces/ws-1/f-1/photo.png')).toBe(false);
+  });
+
+  it('refuses the Drive copy left by a failed archive verification (#429)', async () => {
+    const h = makeHarness();
+    const key = 'workspaces/ws-1/f-1/photo.png';
+    h.active.objects.set(key, Buffer.from('original'));
+    h.archive.corruptOnRead = true;
+
+    await archiveFile(h.deps, makeRecord());
+    const afterArchive = Object.assign(makeRecord(), ...h.transitions) as ArchiveFileRecord;
+    expect(afterArchive.archiveState).toBe('reconciliation_required');
+    expect(afterArchive.archiveHash).toBe(sha256(Buffer.from('original')));
+
+    const result = await restoreFile(h.deps, afterArchive);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.code).toBe('ARCHIVE_HASH_MISMATCH');
+    // The good R2 bytes are never overwritten by the unverified copy.
+    expect(h.active.objects.get(key)).toEqual(Buffer.from('original'));
   });
 
   it('keeps the file archived when the cold read fails', async () => {

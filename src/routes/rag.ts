@@ -8,7 +8,7 @@
 import { embedTexts, loadEmbeddingConfigFromEnv } from '../rag/embeddings';
 import { RAG_CHUNKER, RAG_CHUNK_OVERLAP, RAG_CHUNK_SIZE, RAG_MODEL_VERSION, embedInBatches, ragChunkConfig } from '../rag/ingest';
 import { chunkKey, chunkText, contentHash, extractText } from '../rag/pipeline';
-import { loadRerankConfigFromEnv, rerankCandidateCount, rerankScores } from '../rag/rerank';
+import { applyRerankScores, loadRerankConfigFromEnv, rerankCandidateCount, rerankScores } from '../rag/rerank';
 import { authenticateRequest, keyWorkspaceMatches, requireScope, roleAllows, scopeDenied } from '../server/auth-context';
 import { dbDeleteDocument, dbEnqueueJob, dbEnsureEmbeddingConfig, dbGetArchiveRecord, dbGetDocument, dbGetWorkspaceMembership, dbListDocuments, dbMatchChunksHybrid, dbRenameDocument, dbReplaceChunksAndEmbeddings, dbUpsertDocumentVersion, query } from '../server/db';
 import { readJsonObject, requireUuid, sendJson } from '../server/http';
@@ -244,9 +244,7 @@ export async function handleRagRoutes(
     if (rerankConfig) {
       const scores = await rerankScores(rerankConfig, query, results.map((r) => r.content));
       if (scores) {
-        results = results
-          .map((r, i) => ({ ...r, rerankScore: scores[i]! }))
-          .sort((a, b) => b.rerankScore - a.rerankScore);
+        results = applyRerankScores(results, scores);
         reranked = true;
       }
       results = results.slice(0, matchLimit);

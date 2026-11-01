@@ -96,7 +96,7 @@ test.describe('Operations page', () => {
     await page.click('button:has-text("Run worker pass")');
 
     // The job completes and activity records the transition.
-    await expect(page.getByText('completed').first()).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('table td').getByText('completed', { exact: true }).first()).toBeVisible({ timeout: 30000 });
     await expect(page.getByText(/Job thumbnail completed/)).toBeVisible({ timeout: 30000 });
   });
 

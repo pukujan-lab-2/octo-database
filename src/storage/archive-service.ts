@@ -149,10 +149,12 @@ export async function archiveFile(
   // Verify the destination BEFORE deleting anything. A cold copy we cannot read
   // back is not durable, and the R2 source must survive.
   if (!(await archiveHoldsBytes(deps.archive, uploaded.locator, bytes.byteLength, hash))) {
+    // The hash goes with the locator, so a later restore can tell this copy is bad.
     await deps.updateFile(fileId, {
       archiveState: 'reconciliation_required',
       archiveProvider: deps.archive.label,
       archiveLocator: uploaded.locator,
+      archiveHash: hash,
     });
     return {
       ok: false,
@@ -178,6 +180,7 @@ export async function archiveFile(
       archiveState: 'reconciliation_required',
       archiveProvider: deps.archive.label,
       archiveLocator: uploaded.locator,
+      archiveHash: hash,
     });
     return {
       ok: false,

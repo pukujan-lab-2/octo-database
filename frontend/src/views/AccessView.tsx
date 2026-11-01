@@ -1,5 +1,6 @@
 import { Panel, StatusPill } from "@/components/portal/Panel";
 import { ApiKeysSection } from "@/components/access/ApiKeysSection";
+import { KeyUseLogSection } from "@/components/access/KeyUseLogSection";
 import { SharesSection } from "@/components/access/SharesSection";
 import { MfaSection } from "@/components/access/MfaSection";
 import { WorkspaceSettingsSection } from "@/components/access/WorkspaceSettingsSection";
@@ -75,6 +76,8 @@ export function AccessView({
         refreshCode={challenge.refresh}
         reload={data.reload}
       />
+
+      <KeyUseLogSection />
 
       <SharesSection workspaceId={workspace.id} query={data.shares} reload={data.reload} />
 

@@ -11,9 +11,9 @@ import { deleteUmamiWebsite, umamiConfigured } from '../lib/umami';
 import { authenticateRequest, effectiveWorkspaceRole, requireScope, scopeDenied } from '../server/auth-context';
 import { autoProvisionWorkspaceDatabase } from '../server/auto-provision';
 import { confirmGate } from '../server/confirm';
-import { dbCountTransientFiles, dbCreateWorkspaceAtomic, dbDeleteWorkspaceAtomic, dbGetAuthorizedWorkspaces, dbGetWorkspaceById, dbGetWorkspaceDatabase, dbGetWorkspaceMembership, dbGetWorkspaceUmami, dbInsertWorkspaceDatabase, dbListWorkspaceStorageKeys, dbRecordActivity, dbSetWorkspaceDatabaseCredential, query } from '../server/db';
+import { dbCountTransientFiles, dbCreateWorkspaceAtomic, dbDeleteWorkspaceAtomic, dbGetAuthorizedWorkspaces, dbGetWorkspaceById, dbGetWorkspaceDatabase, dbGetWorkspaceMembership, dbGetWorkspaceUmami, dbInsertWorkspaceDatabase, dbListWorkspaceDatabases, dbListWorkspaceStorageKeys, dbRecordActivity, dbSetWorkspaceDatabaseCredential, query } from '../server/db';
 import { readJsonObject, sendJson } from '../server/http';
-import { dropProvisionedDatabase, provisionDatabase, provisioningConfigured } from '../server/provisioning';
+import { databaseSizes, dropProvisionedDatabase, provisionDatabase, provisioningConfigured } from '../server/provisioning';
 import { graphClient, UUID_PATTERN } from '../server/runtime';
 import { randomUUID } from 'crypto';
 import { IncomingMessage, ServerResponse } from 'http';
@@ -26,6 +26,50 @@ export async function handleWorkspacesRoutes(
   const pathname = url.pathname;
 
   // 3. Workspaces: GET /api/workspaces
+  // Workspace databases: one row per workspace the caller can see, with its
+  // provisioned database and on-disk size when it has one (#432).
+  if (pathname === '/api/databases' && req.method === 'GET') {
+    const auth = await authenticateRequest(req);
+    if (!auth) {
+      sendJson(res, 401, { error: 'UNAUTHENTICATED' });
+      return true;
+    }
+    if (!requireScope(auth, 'read')) {
+      scopeDenied(res, 'read');
+      return true;
+    }
+    const pinned = auth.apiKey?.workspaceId ?? null;
+    const workspaces = (await dbGetAuthorizedWorkspaces(auth.principal.id)).filter((w) => !pinned || w.id === pinned);
+    const databases = await dbListWorkspaceDatabases(workspaces.map((w) => w.id));
+    const byWorkspace = new Map(databases.map((d) => [d.workspaceId, d]));
+    let sizes = new Map<string, number>();
+    if (provisioningConfigured() && databases.length > 0) {
+      try {
+        sizes = await databaseSizes(databases.map((d) => d.dbName));
+      } catch (err) {
+        console.warn('Database size lookup failed:', err);
+      }
+    }
+    sendJson(
+      res,
+      200,
+      workspaces.map((w) => {
+        const database = byWorkspace.get(w.id);
+        return {
+          workspaceId: w.id,
+          workspaceName: w.name,
+          workspaceSlug: w.slug,
+          role: w.role,
+          dbName: database?.dbName ?? null,
+          status: database?.status ?? null,
+          createdAt: database?.createdAt ?? null,
+          sizeBytes: database ? (sizes.get(database.dbName) ?? null) : null,
+        };
+      })
+    );
+    return true;
+  }
+
   if (pathname === '/api/workspaces' && req.method === 'GET') {
     const auth = await authenticateRequest(req);
     if (!auth) {
@@ -210,7 +254,9 @@ export async function handleWorkspacesRoutes(
   // Destructive: owner-only, gated on the human confirmation secret plus the
   // typed slug, and refused while any file is mid-archive so a copy in flight
   // cannot be orphaned.
-  if (pathname.startsWith('/api/workspaces/') && req.method === 'DELETE') {
+  // Only /api/workspaces/<id>: deeper DELETEs (analytics schedules) belong to
+  // their own route family further down ROUTES.
+  if (/^\/api\/workspaces\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
     const auth = await authenticateRequest(req);
     if (!auth) {
       sendJson(res, 401, { error: 'UNAUTHENTICATED' });

@@ -8,22 +8,33 @@ Build a reusable self-hosted workspace data platform where people, applications,
 
 Octo provides one workspace-oriented capability API over mature databases, storage systems, analytics engines, and external authorities. It should glue existing systems together rather than rebuild weaker copies of them.
 
-## Product model
+## What Octo provides today
 
-A workspace uses only the capabilities it needs.
+A project keeps its data in an Octo **workspace**. A person signs in with Google (or as a guest), creates a workspace, and gets a key. Their app talks to the workspace over HTTP, their agents talk to it over MCP, and their own code can run SQL against the workspace's own Postgres database. Everyone goes through the same authorization path. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains how each piece works; [`docs/consuming-octo.md`](docs/consuming-octo.md) is the guide for another repository adopting Octo.
 
-- PostgreSQL — live relational and transactional state.
-- pgvector — optional vector search/projection.
-- Neo4j or another graph database — optional graph projection.
-- Parquet — long-term operational, observational, and analytical history.
-- DuckDB — analytical queries over Parquet and other analytical data.
-- Cloudflare R2 — hot/application-serving object storage when useful.
-- Google Drive — large, cold, archival, or rarely accessed files.
-- Git/GitHub — source code and repository-owned project continuity.
+What a workspace can use, all optional:
 
-The Octo server owns the workspace contract: identity, authorization, capability discovery, storage routing, synchronization, jobs, projections, analytics access, agent proposals, and execution of approved actions.
+| Capability | What it is | Built on |
+|---|---|---|
+| Workspace database | One Postgres database per workspace with its own login role; SQL over HTTP or MCP | Postgres 16 + pgvector |
+| Files | Upload, list, download, publish to a public URL, archive cold files and restore them | Cloudflare R2, Google Drive (cold tier) |
+| Document search (RAG) | Ingest text and PDFs, hybrid search (vector + full text, fused), optional reranking | pgvector `halfvec(512)`, an OpenAI-compatible embedder, a reranker, a PDF reader |
+| Knowledge ledger and graph | Claims, evidence and beliefs recorded over time; a per-workspace graph rebuilt from them | Postgres (canonical), FalkorDB (rebuildable) |
+| Analytics | Register Parquet datasets, run saved or scheduled SQL specs, write results back to the workspace database | DuckDB over Parquet in R2 |
+| Agent traces | Send OpenTelemetry spans; each workspace gets its own project | Phoenix |
+| UX analytics | One website per workspace with replays and heatmaps; members become team users | Umami |
+| Vault | Store secrets; agents use them through a relay without ever seeing them | AES-256-GCM in Postgres |
+| MCP | 35 tools over the same API, filtered to what the key can do | MCP Streamable HTTP and stdio |
 
-Applications consume the HTTP API or a thin typed SDK. Agents consume the same capabilities through an MCP/CLI adapter. Deep infrastructure administration remains in mature provider/native consoles.
+**Who uses it:**
+
+- **People** sign in with Google, or as a guest with a sandbox workspace. A browser session is a short-lived signed token.
+- **Agents and apps** use API keys (`read`, `write`, `files`, `delete` scopes; account-wide or pinned to one workspace) or MCP OAuth tokens bound to one workspace. An agent is not a separate account: it acts with a credential that belongs to a person.
+- **Other repositories** adopt Octo over its public surfaces and never change this repository (see AGENTS.md, "Adopters do not modify this repository").
+
+**Where it runs:** production is the `production` branch, deployed by Komodo on the always-on VPS when that branch moves (see [`docs/self-hosting.md`](docs/self-hosting.md) and `Pukujan-lab/server-management` `vps/PLAN.md`). Heavy AI models (PDF reader, reranker) run on demand on other machines and are reached over Tailscale.
+
+Deep administration stays in mature tools: Postgres clients for databases, Phoenix for traces, Umami for UX analytics, Komodo for deploys.
 
 ## Durable-state principle
 
@@ -178,4 +189,4 @@ The immediate program is a productization reset:
 5. migrate only useful existing product behavior into the new shell;
 6. deliver subsequent capabilities as end-to-end vertical slices.
 
-Issue #72 and its working notes contain the active architecture discussion until this contract is superseded by an explicit owner correction.
+Issue #72 and its working notes hold the original architecture discussion. Much of that program has since shipped as numbered slices (their packets are in `docs/productization/slices/`, their schema in the `sliceN` migrations); `docs/ARCHITECTURE.md` describes what runs today.

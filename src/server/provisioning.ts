@@ -231,6 +231,16 @@ export async function provisionDatabase(slug: string): Promise<ProvisionedDataba
  * the resources. Best effort by design: the workspace is gone either way, so a
  * failure here is reported to the caller rather than failing the delete.
  */
+/** On-disk size in bytes of each named database that exists. */
+export async function databaseSizes(dbNames: string[]): Promise<Map<string, number>> {
+  if (dbNames.length === 0) return new Map();
+  const { rows } = await getAdminPool().query<{ datname: string; bytes: string }>(
+    'SELECT datname, pg_database_size(datname)::text AS bytes FROM pg_database WHERE datname = ANY($1::text[])',
+    [dbNames]
+  );
+  return new Map(rows.map((row) => [row.datname, Number(row.bytes)]));
+}
+
 export async function dropProvisionedDatabase(dbName: string, roleName: string): Promise<void> {
   assertSafeName(dbName);
   assertSafeName(roleName);

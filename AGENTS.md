@@ -45,8 +45,8 @@ Octo is a modular monolith organized by feature (vertical slice). `src/routes/<f
 **The layer rule is machine-checked, not advisory.** `npm run lint:imports` (`dependency-cruiser`, config `.dependency-cruiser.cjs`) runs inside the required `gates` check and fails CI on any import that crosses a layer boundary the wrong direction. Run it before opening a PR.
 
 - New endpoint → `src/routes/<family>.ts`, plus one line in the `ROUTES` array in `src/server/index.ts`.
-- New SQL → `src/server/db/<domain>.ts`, re-exported from the `src/server/db.ts` barrel.
-- Never import `src/server/**` from outside `src/server/**` and `src/routes/**`; never import one route module from another; never import `db-core.ts` or a `db/<domain>.ts` store directly (use the `src/server/db` barrel); never construct a `pg` pool or an `AsyncLocalStorage` outside `src/server/db-core.ts`.
+- New SQL → `src/server/db.ts` today. The planned split into `db-core.ts` and `db/<domain>.ts` stores has not landed; once it does, new SQL goes in a store re-exported from the `src/server/db.ts` barrel.
+- Never import `src/server/**` from outside `src/server/**` and `src/routes/**`; never import one route module from another; import database code only through the `src/server/db` barrel (never a future `db-core.ts` or `db/<domain>.ts` directly); never construct a `pg` pool or an `AsyncLocalStorage` outside the db module (`src/server/db.ts` today, `db-core.ts` after the split).
 - Do not add a web framework, a DI container, an ORM, or an event bus. The raw-`http` dispatch loop is the intended shape.
 - Fix a boundary violation by moving the code, not by widening a rule. Carve-outs in `.dependency-cruiser.cjs` require owner approval and must carry a `comment` naming their removal condition.
 

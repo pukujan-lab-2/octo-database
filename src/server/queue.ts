@@ -5,7 +5,7 @@
  */
 
 import { JobOutcome, processJob } from '../jobs/worker';
-import { dbClaimJob, dbEnsureEmbeddingConfig, dbReplaceChunksAndEmbeddings, dbUpsertDocumentVersion, queryService, dbCompleteJob, dbEnqueueFileTransition, dbEnqueueJob, dbEpistemicWatermarkService, dbFailJob, dbGetArchiveRecord, dbGetDatasetVersion, dbGetLatestDatasetVersion, dbGetWorkspaceSpec, dbListDueAnalyticsSchedules, dbMarkAnalyticsScheduleRan, dbHasOpenFileJob, dbListAgedActiveFiles, dbListRetentionWorkspaces, dbReadEpistemicGraphService, dbRecordActivity, dbRecordOpsEvent, dbRegisterAnalyticsResult, dbUpsertGraphProjectionService } from './db';
+import { dbClaimJob, dbEnsureEmbeddingConfig, dbReplaceChunksAndEmbeddings, dbUpsertDocumentVersion, queryService, dbCompleteJob, dbEnqueueFileTransition, dbEnqueueJob, dbEpistemicWatermarkService, dbFailJob, dbGetArchiveRecord, dbGetDatasetVersion, dbGetLatestDatasetVersion, dbGetWorkspaceSpec, dbListDueAnalyticsSchedules, dbMarkAnalyticsScheduleRan, dbHasOpenFileJob, dbListAgedActiveFiles, dbListRetentionWorkspaces, dbPruneKeyUses, dbReadEpistemicGraphService, dbRecordActivity, dbRecordOpsEvent, dbRegisterAnalyticsResult, dbUpsertGraphProjectionService } from './db';
 import { writeAnalyticsSink } from './analytics-sink';
 import { loadEmbeddingConfigFromEnv } from '../rag/embeddings';
 import { loadReaderConfigFromEnv } from '../rag/reader';
@@ -207,8 +207,8 @@ export async function runAnalyticsSchedules(): Promise<number> {
 /**
  * Starts the background loops a single container needs: a minute tick that
  * enqueues due analytics schedules, one that drains the job queue (so queued archiving/restores progress without a human
- * pressing "Run worker pass"), and an hourly retention sweep. Both are unref'd so
- * they never hold the process open.
+ * pressing "Run worker pass"), and an hourly retention sweep that also drops
+ * key-use rows past 30 days. All are unref'd so they never hold the process open.
  */
 export function startSchedulers(): void {
   setInterval(() => {
@@ -228,5 +228,10 @@ export function startSchedulers(): void {
         }
       })
       .catch((err) => console.warn('Retention sweep failed:', err));
+    dbPruneKeyUses()
+      .then((deleted) => {
+        if (deleted > 0) console.log(`Pruned ${deleted} key-use row(s) older than 30 days`);
+      })
+      .catch((err) => console.warn('Key-use prune failed:', err));
   }, 60 * 60 * 1000).unref();
 }

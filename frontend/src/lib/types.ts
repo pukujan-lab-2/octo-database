@@ -71,6 +71,32 @@ export type JobRow = {
   completedAt: string | null;
 };
 
+/** Key uses grouped by key, IP, method, route and outcome (GET /api/keys/uses). */
+export type KeyUseSummaryRow = {
+  keyId: string;
+  keyName: string | null;
+  keyPrefix: string | null;
+  sourceIp: string | null;
+  method: string;
+  route: string;
+  outcome: "ok" | "revoked" | "expired";
+  uses: number;
+  firstUsedAt: string;
+  lastUsedAt: string;
+};
+
+/** One workspace and its provisioned database, if any (GET /api/databases). */
+export type WorkspaceDatabaseRow = {
+  workspaceId: string;
+  workspaceName: string;
+  workspaceSlug: string;
+  role: string;
+  dbName: string | null;
+  status: string | null;
+  createdAt: string | null;
+  sizeBytes: number | null;
+};
+
 export type ActivityRow = {
   id: string;
   eventType: string;

@@ -9,7 +9,7 @@ import { KEY_CLASSES, KeyClass } from '../api/capabilities';
 import { authorizeKeyMint, hashApiKeySecret, parseKeyScopes } from '../api/keys';
 import { authenticateRequest, requireScope, scopeDenied } from '../server/auth-context';
 import { confirmGate } from '../server/confirm';
-import { dbGetWorkspaceMembership, dbInsertApiKey, dbListApiKeys, dbUpdateApiKeyScopes, query } from '../server/db';
+import { dbGetWorkspaceMembership, dbInsertApiKey, dbListApiKeys, dbListKeyUseSummary, dbUpdateApiKeyScopes, query } from '../server/db';
 import { readJsonObject, sendJson } from '../server/http';
 import { UUID_PATTERN } from '../server/runtime';
 import { randomUUID } from 'crypto';
@@ -40,6 +40,22 @@ export async function handleKeysRoutes(
         isAccountWide: k.workspaceId === null,
       }))
     );
+    return true;
+  }
+
+  // Key use log: the caller's key uses over the retained 30 days, grouped by key,
+  // IP, method, route and outcome (#432).
+  if (pathname === '/api/keys/uses' && req.method === 'GET') {
+    const auth = await authenticateRequest(req);
+    if (!auth) {
+      sendJson(res, 401, { error: 'UNAUTHENTICATED' });
+      return true;
+    }
+    if (!requireScope(auth, 'read')) {
+      scopeDenied(res, 'read');
+      return true;
+    }
+    sendJson(res, 200, await dbListKeyUseSummary(auth.principal.id));
     return true;
   }
 

@@ -86,3 +86,36 @@ export function verifySessionToken(token: string): string | null {
   }
   return principalId;
 }
+
+// Viewer cookie (#445): lets the platform owner open a hosted viewer (Phoenix)
+// without a second login. A different signed envelope from the session token, so
+// one cannot be replayed as the other, and not a bearer credential for the API.
+const VIEWER_TTL_SECONDS = 8 * 60 * 60;
+
+function signViewer(principalId: string, expiresAt: number): string {
+  return createHmac('sha256', sessionSecret()).update(`viewer:${principalId}:${expiresAt}`).digest('base64url');
+}
+
+export function viewerTtlSeconds(): number {
+  return VIEWER_TTL_SECONDS;
+}
+
+/** Mints a signed, expiring viewer cookie value: <principalId>.<exp>.<sig>. */
+export function signViewerToken(principalId: string, ttlSeconds = VIEWER_TTL_SECONDS): string {
+  const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+  return `${principalId}.${expiresAt}.${signViewer(principalId, expiresAt)}`;
+}
+
+/** Returns the principal id a viewer cookie was minted for, or null when invalid or expired. */
+export function verifyViewerToken(token: string): string | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [principalId, exp, sig] = parts;
+  if (!principalId || !exp || !sig || !UUID_PATTERN.test(principalId)) return null;
+  const expiresAt = Number(exp);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) return null;
+  const expected = Buffer.from(signViewer(principalId, expiresAt));
+  const provided = Buffer.from(sig);
+  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) return null;
+  return principalId;
+}

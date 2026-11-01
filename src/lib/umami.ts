@@ -69,6 +69,22 @@ function memberPassword(principalId: string): string {
   return createHmac('sha256', process.env['OCTO_UMAMI_ADMIN_PASSWORD'] ?? '').update(`octo-member:${principalId}`).digest('hex');
 }
 
+/** The website resources an agent may read; each is /api/websites/<id>/<resource> in Umami. */
+export const UMAMI_READ_RESOURCES = ['stats', 'pageviews', 'metrics', 'events', 'sessions', 'replays', 'active'] as const;
+
+/**
+ * Reads one resource of one website. The website id is the workspace's, never the
+ * caller's; the query (startAt, endAt, unit, type, limit ...) passes through, with
+ * a default window of the last 7 days when the caller gives none.
+ */
+export async function readUmamiWebsite(websiteId: string, resource: string, search: URLSearchParams): Promise<unknown> {
+  const params = new URLSearchParams(search);
+  if (!params.has('endAt')) params.set('endAt', String(Date.now()));
+  if (!params.has('startAt')) params.set('startAt', String(Number(params.get('endAt')) - 7 * 24 * 60 * 60 * 1000));
+  const token = await adminToken();
+  return call('GET', `/websites/${encodeURIComponent(websiteId)}/${resource}?${params.toString()}`, token);
+}
+
 /** Creates the workspace's team and website, with strict replay masking. */
 export async function createUmamiWebsite(input: {
   slug: string;

@@ -9,11 +9,19 @@
  *   GET  /api/workspaces/:id/ux-analytics/link  a URL that signs the caller in to Umami
  *                                               on the workspace's website
  *
+ *  GET  /api/workspaces/:id/ux-analytics/read/<resource>
+ *                                               the website's own data (stats, pageviews,
+ *                                               metrics, events, sessions, replays, active)
+ *                                               for agents; the website is the workspace's,
+ *                                               never the caller's (#445)
+ *
  * One route family, dispatched by src/server/index.ts.
  */
 
 import {
+  UMAMI_READ_RESOURCES,
   createUmamiWebsite,
+  readUmamiWebsite,
   ensureUmamiMember,
   syncUmamiMembers,
   umamiConfigured,
@@ -32,14 +40,18 @@ import { readJsonObject, sendJson } from '../server/http';
 import { UUID_PATTERN } from '../server/runtime';
 import type { IncomingMessage, ServerResponse } from 'http';
 
-const ROUTE = /^\/api\/workspaces\/([^/]+)\/ux-analytics(\/link)?$/;
+const ROUTE = new RegExp(
+  `^/api/workspaces/([^/]+)/ux-analytics(/link|/read/(?:${UMAMI_READ_RESOURCES.join('|')}))?$`
+);
 const DOMAIN = /^[a-z0-9.-]+(:\d+)?$/i;
 
 export async function handleUxAnalyticsRoutes(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
   const match = ROUTE.exec(url.pathname);
   if (!match) return false;
-  const [, workspaceId, link] = match as unknown as [string, string, string | undefined];
-  const turnOn = req.method === 'POST' && !link;
+  const [, workspaceId, suffix] = match as unknown as [string, string, string | undefined];
+  const link = suffix === '/link';
+  const readResource = suffix?.startsWith('/read/') ? suffix.slice('/read/'.length) : null;
+  const turnOn = req.method === 'POST' && !suffix;
   if (req.method !== 'GET' && !turnOn) return false;
 
   const auth = await authenticateRequest(req);
@@ -77,6 +89,14 @@ export async function handleUxAnalyticsRoutes(req: IncomingMessage, res: ServerR
   }
 
   try {
+    if (readResource) {
+      if (!umami.websiteId) {
+        sendJson(res, 404, { error: 'UX_ANALYTICS_OFF: turn it on for this workspace first' });
+        return true;
+      }
+      sendJson(res, 200, await readUmamiWebsite(umami.websiteId, readResource, url.searchParams));
+      return true;
+    }
     if (link) {
       if (!umami.websiteId || !umami.teamId) {
         sendJson(res, 404, { error: 'UX_ANALYTICS_OFF: turn it on for this workspace first' });

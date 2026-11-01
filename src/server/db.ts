@@ -847,6 +847,15 @@ export async function dbPruneKeyUses(days = 30): Promise<number> {
   return rows[0]?.deleted ?? 0;
 }
 
+/** True when the principal is the platform owner. */
+export async function dbIsPlatformOwner(principalId: string): Promise<boolean> {
+  const rows = await queryService<{ owner: boolean }>(
+    'SELECT is_platform_owner AS owner FROM octo.principals WHERE id = $1',
+    [principalId]
+  );
+  return rows[0]?.owner === true;
+}
+
 /**
  * Deletes guest accounts older than `days` and their auto-provisioned workspaces (#439).
  * A guest workspace with files, a provisioned database or a key used inside the

@@ -35,6 +35,10 @@ const GUIDE_TOPICS: Record<string, string> = {
     'register_dataset registers immutable Parquet versions (append: true adds new date partitions to the newest one). query_dataset runs a named spec: the built-in job-failures-by-type-month@1, or a workspace spec ws:<slug>@<n> registered with register_analytics_spec, with its params. Poll get_analytics_query_status, then get_analytics_result. register_analytics_spec registers your own SELECT; schedule_analytics runs a spec on an interval and writes the rows into analytics.<table> in the workspace database.',
   traces:
     "A workspace has one Phoenix project, named after its slug. Send traces to POST /api/workspaces/<id>/otel/v1/traces (OTLP/HTTP, normal Octo key). read_traces reads it back: resource is spans, traces, sessions, span_annotations, trace_annotations, session_annotations or annotation_configs, and query passes through to Phoenix (limit, cursor, start_time, end_time, trace_id, span_id, name, status_code ...). record_eval_scores attaches scores to spans by span_id. get_trace_link returns the viewer URL, which needs a Phoenix login; agents should use read_traces instead. Phoenix datasets, experiments and prompts are not per-workspace, so Octo does not expose them.",
+  ux:
+    "UX analytics is Umami: clicks, session replays (every form field masked) and heatmaps, one website per workspace. get_ux_analytics says whether it is on. An owner or admin turns it on with enable_ux_analytics (the app's domain) and adds the returned tracking tags to the app. read_ux_analytics reads it back: resource is stats, pageviews, metrics, events, sessions, replays or active; the window defaults to the last 7 days and takes startAt and endAt in milliseconds. A person opens the Umami UI from Services in the Octo app.",
+  recipes:
+    "Pick the tool by the need. Store or read rows: provision_database, then query_workspace_database. Search or ask over documents: ingest_document, then query_workspace. Relationships between things: project_graph, then query_graph. Record what was believed and when: record_epistemic, query_claims_as_of, query_belief_as_of. Totals over many rows or over time: register_dataset, then query_dataset. A run failed: get_ops_summary, then retry_job. See what an agent did: read_traces; score it: record_eval_scores. See how people use an app: get_ux_analytics, enable_ux_analytics, read_ux_analytics. Files: upload_file, list_files, download_file. Each surface has a guide topic with the details.",
   keys: 'mint_key is human-stamped: it needs a session with the confirmation secret. A token can only narrow its own authority, never widen scopes or escape its workspace. The raw secret is shown exactly once.',
 };
 
@@ -68,6 +72,9 @@ export const TOOL_ACTIONS: Record<string, string> = {
   read_traces: 'traces.read',
   record_eval_scores: 'traces.ingest',
   get_trace_link: 'traces.link',
+  get_ux_analytics: 'ux_analytics.status',
+  enable_ux_analytics: 'ux_analytics.enable',
+  read_ux_analytics: 'ux_analytics.read',
   register_dataset: 'datasets.register',
   query_dataset: 'analytics.query',
   get_analytics_query_status: 'analytics.query_status',
@@ -114,7 +121,7 @@ export function createOctoMcpServer(api: OctoApi): McpServer {
     {
       instructions: [
         'Octo is a self-hosted workspace data platform and the data layer for the projects it serves: do not stand up a separate database for a project Octo serves.',
-        'Only the tools your key can use are listed. Call guide with a topic (workspaces, ledger, analytics, traces, keys) for how a surface works.',
+        'Only the tools your key can use are listed. Call guide with a topic (recipes for which tool fits a need; workspaces, ledger, analytics, traces, ux, keys for how a surface works).',
         "Octo's repository is read-only to adopters: propose a change as an OIO observational issue, never a pull request.",
       ].join(' '),
     }
@@ -615,6 +622,55 @@ export function createOctoMcpServer(api: OctoApi): McpServer {
     async ({ workspaceId }) => {
       try {
         return asText(await api.getTraceLink({ workspaceId }));
+      } catch (error) {
+        return asError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'get_ux_analytics',
+    'Whether UX analytics (clicks, session replays with form fields masked, heatmaps) is on for a workspace, its website id and the tracking tags to add to the app. Read-only.',
+    { workspaceId: z.string().describe('The workspace to check') },
+    async ({ workspaceId }) => {
+      try {
+        return asText(await api.getUxAnalytics({ workspaceId }));
+      } catch (error) {
+        return asError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'enable_ux_analytics',
+    "Turn on UX analytics for a workspace and get the tracking tags to add to its app. Creates the workspace's website once. Needs the write scope and an owner or admin role.",
+    {
+      workspaceId: z.string().describe('The workspace to turn it on for'),
+      domain: z.string().describe("The app's host name, e.g. app.example.com"),
+    },
+    async ({ workspaceId, domain }) => {
+      try {
+        return asText(await api.enableUxAnalytics({ workspaceId, domain }));
+      } catch (error) {
+        return asError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'read_ux_analytics',
+    "Read a workspace's UX analytics: stats (totals), pageviews (a series), metrics (top pages, referrers, browsers ... by type), events, sessions, replays, or active (visitors now). Read-only; the window defaults to the last 7 days.",
+    {
+      workspaceId: z.string().describe('The workspace whose analytics to read'),
+      resource: z.enum(['stats', 'pageviews', 'metrics', 'events', 'sessions', 'replays', 'active']).describe('What to read'),
+      query: z
+        .record(z.string(), z.union([z.string(), z.number()]))
+        .optional()
+        .describe('Umami filters, e.g. {startAt: 1793000000000, endAt: 1793600000000, unit: "day", type: "path", limit: 20}'),
+    },
+    async ({ workspaceId, resource, query }) => {
+      try {
+        return asText(await api.readUxAnalytics({ workspaceId, resource, ...(query === undefined ? {} : { query }) }));
       } catch (error) {
         return asError(error);
       }

@@ -200,10 +200,14 @@ checks it in `gates`; a change that breaks one fails CI.
 | A revoked key starts no new request. | `KeyRevocation` | yes |
 | An API key (other than the owner's listed agent key) never passes confirmation; a session skips codes only inside the window after a pass. | `KeyRevocation` | yes |
 | No write lands after a key is revoked. | `KeyRevocationInFlight` | **no**: requests already past authentication finish |
+| Only a live cookie from the platform owner gets the Phoenix admin token. | `PhoenixGate` (`PhoenixGateNoCheck`, `PhoenixGateNoOwnerRecheck` are the controls) | yes |
+| The admin token is never added after the owner is demoted or the cookie expires. | `PhoenixGateInFlight` | **no**: a request already past the check is still forwarded |
+| A tool listed at connect cannot write once its key loses the write scope. | `ToolScope` (`ToolScopeListOnly` is the control) | yes, because the API checks scopes on every call |
 
 Where a property does not hold, the model pins today's behavior as an expected
 failure; where a fixed variant exists, it shows what would make it hold:
 
+- **A Phoenix request already past the cookie check is forwarded with the admin token** even if the owner is demoted or the cookie expires in the milliseconds between the check and the forward. The next request is refused.
 - **Archive can prune bytes a recall just restored.** The file ends `active_r2`
   with no R2 bytes. Drive still holds them; downloads fail until a restore job
   runs.

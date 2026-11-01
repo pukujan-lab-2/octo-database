@@ -292,6 +292,26 @@ export class OctoApi {
     );
   }
 
+  getUxAnalytics(input: { workspaceId: string }): Promise<unknown> {
+    return this.request('GET', `/api/workspaces/${encodeURIComponent(input.workspaceId)}/ux-analytics`);
+  }
+
+  enableUxAnalytics(input: { workspaceId: string; domain: string }): Promise<unknown> {
+    return this.request('POST', `/api/workspaces/${encodeURIComponent(input.workspaceId)}/ux-analytics`, {
+      domain: input.domain,
+    });
+  }
+
+  readUxAnalytics(input: { workspaceId: string; resource: string; query?: Record<string, string | number> }): Promise<unknown> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(input.query ?? {})) params.set(key, String(value));
+    const search = params.toString();
+    return this.request(
+      'GET',
+      `/api/workspaces/${encodeURIComponent(input.workspaceId)}/ux-analytics/read/${input.resource}${search ? `?${search}` : ''}`
+    );
+  }
+
   getTraceLink(input: { workspaceId: string }): Promise<unknown> {
     return this.request('GET', `/api/workspaces/${encodeURIComponent(input.workspaceId)}/otel/link`);
   }

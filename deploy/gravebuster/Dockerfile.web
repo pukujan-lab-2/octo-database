@@ -12,7 +12,13 @@ RUN npm ci && npm --prefix frontend ci
 COPY . .
 RUN npm run build
 
-FROM caddy:2-alpine
+# Caddy with Sablier's plugin, which starts Phoenix and the embedder on request and
+# lets Sablier stop them when idle (#448).
+FROM caddy:2.11.2-builder AS caddy
+RUN xcaddy build --with github.com/sablierapp/sablier-caddy-plugin@v1.0.2
+
+FROM caddy:2.11.2-alpine
+COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 COPY --from=builder /app/dist /srv
 COPY deploy/gravebuster/Caddyfile /etc/caddy/Caddyfile
 

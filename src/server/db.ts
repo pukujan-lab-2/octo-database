@@ -847,6 +847,40 @@ export async function dbPruneKeyUses(days = 30): Promise<number> {
   return rows[0]?.deleted ?? 0;
 }
 
+/**
+ * Deletes guest accounts older than `days` and their auto-provisioned workspaces (#439).
+ * A guest workspace with files, a provisioned database or a key used inside the
+ * window is left, and so is the guest that owns it. Workspaces go first because
+ * octo.workspaces.created_by is ON DELETE RESTRICT.
+ */
+export async function dbPruneGuests(days = 7): Promise<{ workspaces: number; principals: number }> {
+  const workspaces = await queryService<{ deleted: number }>(
+    `WITH gone AS (
+       DELETE FROM octo.workspaces w USING octo.principals p
+       WHERE p.id = w.created_by AND p.is_guest AND w.auto_provisioned
+         AND p.created_at < now() - make_interval(days => $1)
+         AND NOT EXISTS (SELECT 1 FROM octo.files f WHERE f.workspace_id = w.id)
+         AND NOT EXISTS (SELECT 1 FROM octo.workspace_databases d WHERE d.workspace_id = w.id)
+         AND NOT EXISTS (SELECT 1 FROM octo.api_keys k WHERE k.workspace_id = w.id
+                           AND coalesce(k.last_used_at, k.created_at) > now() - make_interval(days => $1))
+       RETURNING 1
+     )
+     SELECT count(*)::int AS deleted FROM gone`,
+    [days]
+  );
+  const principals = await queryService<{ deleted: number }>(
+    `WITH gone AS (
+       DELETE FROM octo.principals p
+       WHERE p.is_guest AND p.created_at < now() - make_interval(days => $1)
+         AND NOT EXISTS (SELECT 1 FROM octo.workspaces w WHERE w.created_by = p.id)
+       RETURNING 1
+     )
+     SELECT count(*)::int AS deleted FROM gone`,
+    [days]
+  );
+  return { workspaces: workspaces[0]?.deleted ?? 0, principals: principals[0]?.deleted ?? 0 };
+}
+
 export interface KeyUseSummaryRow {
   keyId: string;
   keyName: string | null;

@@ -5,7 +5,7 @@
  */
 
 import { JobOutcome, processJob } from '../jobs/worker';
-import { dbClaimJob, dbEnsureEmbeddingConfig, dbReplaceChunksAndEmbeddings, dbUpsertDocumentVersion, queryService, dbCompleteJob, dbEnqueueFileTransition, dbEnqueueJob, dbEpistemicWatermarkService, dbFailJob, dbGetArchiveRecord, dbGetDatasetVersion, dbGetLatestDatasetVersion, dbGetWorkspaceSpec, dbListDueAnalyticsSchedules, dbMarkAnalyticsScheduleRan, dbHasOpenFileJob, dbListAgedActiveFiles, dbListRetentionWorkspaces, dbPruneKeyUses, dbReadEpistemicGraphService, dbRecordActivity, dbRecordOpsEvent, dbRegisterAnalyticsResult, dbUpsertGraphProjectionService } from './db';
+import { dbClaimJob, dbEnsureEmbeddingConfig, dbReplaceChunksAndEmbeddings, dbUpsertDocumentVersion, queryService, dbCompleteJob, dbEnqueueFileTransition, dbEnqueueJob, dbEpistemicWatermarkService, dbFailJob, dbGetArchiveRecord, dbGetDatasetVersion, dbGetLatestDatasetVersion, dbGetWorkspaceSpec, dbListDueAnalyticsSchedules, dbMarkAnalyticsScheduleRan, dbHasOpenFileJob, dbListAgedActiveFiles, dbListRetentionWorkspaces, dbPruneGuests, dbPruneKeyUses, dbReadEpistemicGraphService, dbRecordActivity, dbRecordOpsEvent, dbRegisterAnalyticsResult, dbUpsertGraphProjectionService } from './db';
 import { writeAnalyticsSink } from './analytics-sink';
 import { loadEmbeddingConfigFromEnv } from '../rag/embeddings';
 import { loadReaderConfigFromEnv } from '../rag/reader';
@@ -233,5 +233,10 @@ export function startSchedulers(): void {
         if (deleted > 0) console.log(`Pruned ${deleted} key-use row(s) older than 30 days`);
       })
       .catch((err) => console.warn('Key-use prune failed:', err));
+    dbPruneGuests()
+      .then(({ workspaces, principals }) => {
+        if (principals > 0 || workspaces > 0) console.log(`Pruned ${principals} guest(s) and ${workspaces} guest workspace(s) older than 7 days`);
+      })
+      .catch((err) => console.warn('Guest prune failed:', err));
   }, 60 * 60 * 1000).unref();
 }

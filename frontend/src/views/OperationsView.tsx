@@ -4,13 +4,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Panel, StatusPill } from "@/components/portal/Panel";
 import { StatTile } from "@/components/portal/StatTile";
 import { EmptyState, ErrorState } from "@/components/portal/EmptyState";
+import { DataTable, type DataColumn } from "@/components/portal/DataTable";
 import { ActivityChart, buildActivitySeries } from "@/components/portal/ActivityChart";
 import { api, errorMessage } from "@/lib/api";
-import { formatCount, formatDateTime, formatRelative } from "@/lib/format";
+import { formatBytes, formatCount, formatDateTime, formatRelative } from "@/lib/format";
+import { useWorkspaceDatabases } from "@/lib/queries";
 import { jobStateTone } from "@/components/portal/file-status";
 import { useChartColors } from "@/hooks/useChartColors";
 import type { WorkspaceData } from "@/lib/workspace-data";
-import type { JobRow, OpsSummary } from "@/lib/types";
+import type { ActivityRow, JobRow, OpsSummary, WorkspaceDatabaseRow } from "@/lib/types";
 import { toast } from "@/utils/toast";
 import { Activity, CircleSlash2, RotateCw, Timer, Waves } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -112,85 +114,246 @@ export function OperationsView({ workspaceId, data }: { workspaceId: string; dat
             description="Archive, restore and media processing all land here as jobs you can inspect and retry."
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Job type</th>
-                  <th>State</th>
-                  <th>Attempts</th>
-                  <th className="hidden md:table-cell">Created</th>
-                  <th className="hidden lg:table-cell">Completed</th>
-                  <th className="text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((job) => (
-                  <JobRowView key={job.id} job={job} busy={busyJob === job.id} onRetry={retry} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            rows={jobs}
+            columns={jobColumns(busyJob, retry)}
+            rowKey={(job) => job.id}
+            rowClassName={(job) => (busyJob === job.id ? "opacity-60" : undefined)}
+            initialSort={{ id: "created", desc: true }}
+            searchPlaceholder="Search jobs, errors, ids"
+          />
         )}
       </Panel>
 
       <FailureAnalysis data={data} summary={data.opsSummary.data} onRetry={retry} busyJob={busyJob} />
 
-      <Panel eyebrow="Trace" title="Recent activity" bodyClassName="min-h-[140px]">
+      <Panel eyebrow="Trace" title="Activity" bodyClassName="min-h-[140px]">
         {data.activity.isError ? (
           <ErrorState title="Could not load activity" detail={errorMessage(data.activity.error)} onRetry={() => data.activity.refetch()} />
         ) : activity.length === 0 ? (
           <EmptyState motif="ops" title="Nothing has happened yet" description="Activity is written as jobs transition between states." />
         ) : (
-          <ul className="divide-y divide-border">
-            {activity.slice(0, 24).map((entry) => (
-              <li key={entry.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-5 py-3">
-                <StatusPill tone="muted" className="shrink-0">
-                  {entry.eventType}
-                </StatusPill>
-                <span className="min-w-0 flex-1 text-sm leading-relaxed">{entry.summary}</span>
-                {entry.jobId ? <span className="num text-[11px] text-muted-foreground">job {entry.jobId.slice(0, 8)}</span> : null}
-                <span className="num shrink-0 text-[11px] text-muted-foreground">{formatRelative(entry.createdAt)}</span>
-              </li>
-            ))}
-          </ul>
+          <DataTable
+            rows={activity}
+            columns={ACTIVITY_COLUMNS}
+            rowKey={(entry) => entry.id}
+            initialSort={{ id: "when", desc: true }}
+            searchPlaceholder="Search activity"
+          />
         )}
       </Panel>
+
+      <DatabasesPanel />
     </div>
   );
 }
 
-function JobRowView({ job, busy, onRetry }: { job: JobRow; busy: boolean; onRetry: (id: string) => void }) {
-  return (
-    <tr className={busy ? "opacity-60" : undefined}>
-      <td>
-        <div className="max-w-[320px] space-y-0.5">
+function jobColumns(busyJob: string | null, onRetry: (id: string) => void): DataColumn<JobRow>[] {
+  return [
+    {
+      id: "type",
+      header: "Job type",
+      sortValue: (job) => job.jobType,
+      filterValue: (job) => job.jobType,
+      searchValue: (job) => `${job.jobType} ${job.errorSummary ?? ""} ${job.id}`,
+      cell: (job) => (
+        <div className="max-w-[360px] space-y-0.5">
           <p className="truncate font-medium">{job.jobType}</p>
-          {job.errorSummary ? <p className="num truncate text-[11px] text-destructive">{job.errorSummary}</p> : null}
+          <p className="num truncate text-[11px] text-muted-foreground">{job.id.slice(0, 8)}</p>
         </div>
-      </td>
-      <td>
+      ),
+    },
+    {
+      id: "state",
+      header: "State",
+      sortValue: (job) => job.state,
+      filterValue: (job) => job.state,
+      cell: (job) => (
         <StatusPill tone={jobStateTone(job.state)} dot>
           {job.state}
         </StatusPill>
-      </td>
-      <td className="num whitespace-nowrap text-xs">
-        {job.attempts} / {job.maxAttempts}
-      </td>
-      <td className="hidden whitespace-nowrap text-xs text-muted-foreground md:table-cell">{formatDateTime(job.createdAt)}</td>
-      <td className="hidden whitespace-nowrap text-xs text-muted-foreground lg:table-cell">
-        {job.completedAt ? formatDateTime(job.completedAt) : "—"}
-      </td>
-      <td className="text-right">
-        {job.state === "failed" ? (
-          <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => onRetry(job.id)} disabled={busy}>
+      ),
+    },
+    {
+      id: "attempts",
+      header: "Attempts",
+      sortValue: (job) => job.attempts,
+      cell: (job) => (
+        <span className="num whitespace-nowrap text-xs">
+          {job.attempts} / {job.maxAttempts}
+        </span>
+      ),
+    },
+    {
+      id: "error",
+      header: "Error",
+      sortValue: (job) => job.errorSummary,
+      cell: (job) =>
+        job.errorSummary ? (
+          <p className="num max-w-[320px] truncate text-[11px] text-destructive" title={job.errorSummary}>
+            {job.errorSummary}
+          </p>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
+    },
+    {
+      id: "created",
+      header: "Created",
+      sortValue: (job) => job.createdAt,
+      cell: (job) => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(job.createdAt)}</span>,
+    },
+    {
+      id: "completed",
+      header: "Completed",
+      sortValue: (job) => job.completedAt,
+      cell: (job) => (
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
+          {job.completedAt ? formatDateTime(job.completedAt) : "—"}
+        </span>
+      ),
+    },
+    {
+      id: "action",
+      header: "Action",
+      align: "right",
+      cell: (job) =>
+        job.state === "failed" ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => onRetry(job.id)}
+            disabled={busyJob === job.id}
+          >
             <RotateCw className="h-3.5 w-3.5" /> Retry
           </Button>
         ) : (
           <span className="text-xs text-muted-foreground">—</span>
-        )}
-      </td>
-    </tr>
+        ),
+    },
+  ];
+}
+
+const ACTIVITY_COLUMNS: DataColumn<ActivityRow>[] = [
+  {
+    id: "when",
+    header: "When",
+    sortValue: (entry) => entry.createdAt,
+    cell: (entry) => (
+      <div className="whitespace-nowrap">
+        <p className="text-xs">{formatDateTime(entry.createdAt)}</p>
+        <p className="num text-[11px] text-muted-foreground">{formatRelative(entry.createdAt)}</p>
+      </div>
+    ),
+  },
+  {
+    id: "event",
+    header: "Event",
+    sortValue: (entry) => entry.eventType,
+    filterValue: (entry) => entry.eventType,
+    cell: (entry) => <StatusPill tone="muted">{entry.eventType}</StatusPill>,
+  },
+  {
+    id: "summary",
+    header: "Summary",
+    sortValue: (entry) => entry.summary,
+    cell: (entry) => <span className="text-sm leading-relaxed">{entry.summary}</span>,
+  },
+  {
+    id: "job",
+    header: "Job",
+    sortValue: (entry) => entry.jobId,
+    cell: (entry) => <span className="num text-[11px] text-muted-foreground">{entry.jobId ? entry.jobId.slice(0, 8) : "—"}</span>,
+  },
+];
+
+const DATABASE_COLUMNS: DataColumn<WorkspaceDatabaseRow>[] = [
+  {
+    id: "workspace",
+    header: "Workspace",
+    sortValue: (row) => row.workspaceName,
+    searchValue: (row) => `${row.workspaceName} ${row.workspaceSlug} ${row.dbName ?? ""}`,
+    cell: (row) => (
+      <div className="max-w-[260px] space-y-0.5">
+        <p className="truncate font-medium">{row.workspaceName}</p>
+        <p className="num truncate text-[11px] text-muted-foreground">{row.workspaceSlug}</p>
+      </div>
+    ),
+  },
+  {
+    id: "role",
+    header: "Role",
+    sortValue: (row) => row.role,
+    filterValue: (row) => row.role,
+    cell: (row) => <span className="text-xs capitalize">{row.role}</span>,
+  },
+  {
+    id: "database",
+    header: "Database",
+    sortValue: (row) => row.dbName,
+    cell: (row) => <span className="num text-xs">{row.dbName ?? "—"}</span>,
+  },
+  {
+    id: "status",
+    header: "Status",
+    sortValue: (row) => row.status,
+    filterValue: (row) => row.status ?? "not provisioned",
+    cell: (row) =>
+      row.status ? (
+        <StatusPill tone={row.status === "active" ? "success" : "warning"} dot>
+          {row.status}
+        </StatusPill>
+      ) : (
+        <StatusPill tone="muted">not provisioned</StatusPill>
+      ),
+  },
+  {
+    id: "size",
+    header: "Size",
+    align: "right",
+    sortValue: (row) => row.sizeBytes,
+    cell: (row) => <span className="num whitespace-nowrap text-xs">{row.sizeBytes == null ? "—" : formatBytes(row.sizeBytes)}</span>,
+  },
+  {
+    id: "created",
+    header: "Created",
+    sortValue: (row) => row.createdAt,
+    cell: (row) => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(row.createdAt)}</span>,
+  },
+];
+
+/** Every workspace the caller can see, with its database and on-disk size. */
+function DatabasesPanel() {
+  const databases = useWorkspaceDatabases();
+  const rows = databases.data ?? [];
+  const total = rows.reduce((sum, row) => sum + (row.sizeBytes ?? 0), 0);
+  return (
+    <Panel
+      eyebrow="Storage"
+      title="Workspace databases"
+      action={total > 0 ? <StatusPill tone="muted">{formatBytes(total)} total</StatusPill> : null}
+      bodyClassName="min-h-[140px]"
+    >
+      {databases.isError ? (
+        <ErrorState title="Could not load databases" detail={errorMessage(databases.error)} onRetry={() => databases.refetch()} />
+      ) : databases.isPending ? (
+        <div className="space-y-2 p-5">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : rows.length === 0 ? (
+        <EmptyState motif="ops" title="No workspaces" description="Workspaces you can see and their databases are listed here." />
+      ) : (
+        <DataTable
+          rows={rows}
+          columns={DATABASE_COLUMNS}
+          rowKey={(row) => row.workspaceId}
+          initialSort={{ id: "size", desc: true }}
+          searchPlaceholder="Search workspaces and databases"
+        />
+      )}
+    </Panel>
   );
 }
 

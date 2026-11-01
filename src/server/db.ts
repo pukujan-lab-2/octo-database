@@ -826,6 +826,57 @@ export async function dbRecordKeyUse(
   return rows[0] ?? { newIp: false, firstAlertThisHour: false };
 }
 
+/**
+ * Deletes key-use rows older than `days` (#432). Each key's first successful use
+ * per IP stays: dbRecordKeyUse reads it for the key's first use and to tell a
+ * new IP from a known one.
+ */
+export async function dbPruneKeyUses(days = 30): Promise<number> {
+  const rows = await queryService<{ deleted: number }>(
+    `WITH gone AS (
+       DELETE FROM octo.agent_key_uses u
+       WHERE u.used_at < now() - make_interval(days => $1)
+         AND NOT (u.outcome = 'ok' AND u.used_at = (
+           SELECT min(f.used_at) FROM octo.agent_key_uses f
+           WHERE f.key_id = u.key_id AND f.outcome = 'ok' AND f.source_ip IS NOT DISTINCT FROM u.source_ip))
+       RETURNING 1
+     )
+     SELECT count(*)::int AS deleted FROM gone`,
+    [days]
+  );
+  return rows[0]?.deleted ?? 0;
+}
+
+export interface KeyUseSummaryRow {
+  keyId: string;
+  keyName: string | null;
+  keyPrefix: string | null;
+  sourceIp: string | null;
+  method: string | null;
+  route: string | null;
+  outcome: 'ok' | 'revoked' | 'expired';
+  uses: number;
+  firstUsedAt: string;
+  lastUsedAt: string;
+}
+
+/** A principal's key uses, one row per key, IP, method, route and outcome; newest first. */
+export async function dbListKeyUseSummary(principalId: string, limit = 2000): Promise<KeyUseSummaryRow[]> {
+  return queryService<KeyUseSummaryRow>(
+    `SELECT u.key_id AS "keyId", k.name AS "keyName", coalesce(k.prefix, r.prefix) AS "keyPrefix",
+            u.source_ip AS "sourceIp", u.method, u.route, u.outcome,
+            count(*)::int AS uses, min(u.used_at) AS "firstUsedAt", max(u.used_at) AS "lastUsedAt"
+       FROM octo.agent_key_uses u
+       LEFT JOIN octo.api_keys k ON k.id = u.key_id
+       LEFT JOIN octo.revoked_api_keys r ON r.key_id = u.key_id
+      WHERE u.principal_id = $1
+      GROUP BY u.key_id, k.name, k.prefix, r.prefix, u.source_ip, u.method, u.route, u.outcome
+      ORDER BY max(u.used_at) DESC
+      LIMIT $2`,
+    [principalId, limit]
+  );
+}
+
 /** Looks up a key hash that no longer verifies: a revoked (deleted) or an expired key. */
 export async function dbFindDeadApiKey(keyHash: string): Promise<{
   keyId: string;
@@ -1215,7 +1266,7 @@ export async function dbRetryJob(
   }, servicePool);
 }
 
-export async function dbListJobs(workspaceId: string, limit = 50): Promise<DbJobRow[]> {
+export async function dbListJobs(workspaceId: string, limit = 500): Promise<DbJobRow[]> {
   return query<DbJobRow>(
     `SELECT ${JOB_COLUMNS} FROM octo.jobs
      WHERE workspace_id = $1
@@ -1320,7 +1371,7 @@ export async function dbRecordActivity(
 
 export async function dbListActivity(
   workspaceId: string,
-  limit = 50
+  limit = 1000
 ): Promise<
   {
     id: string;
@@ -2454,6 +2505,15 @@ export async function dbGetWorkspaceDatabase(workspaceId: string): Promise<DbWor
     [workspaceId]
   );
   return rows[0] ?? null;
+}
+
+/** The provisioned databases of the given workspaces. */
+export async function dbListWorkspaceDatabases(workspaceIds: string[]): Promise<DbWorkspaceDatabaseRow[]> {
+  if (workspaceIds.length === 0) return [];
+  return query<DbWorkspaceDatabaseRow>(
+    `SELECT ${WORKSPACE_DATABASE_COLUMNS} FROM octo.workspace_databases WHERE workspace_id = ANY($1::uuid[])`,
+    [workspaceIds]
+  );
 }
 
 /** Records a provisioned database. Written last, so a failed provision leaves no row. */

@@ -10,9 +10,11 @@ import type {
   GalleryItem,
   Health,
   JobRow,
+  KeyUseSummaryRow,
   OpsSummary,
   ShareRow,
   Workspace,
+  WorkspaceDatabaseRow,
 } from "@/lib/types";
 
 /** One query per collection, keyed by [resource, workspaceId]. */
@@ -114,6 +116,22 @@ export function useKeys(workspaceId: string) {
     queryKey: ["keys", workspaceId],
     enabled: Boolean(workspaceId),
     queryFn: () => api.get<ApiKey[]>(`/api/keys${qs({ workspaceId })}`),
+  });
+}
+
+/** The caller's key uses over the last 30 days, grouped by key, IP and route. */
+export function useKeyUses() {
+  return useQuery({
+    queryKey: ["key-uses"],
+    queryFn: () => api.get<KeyUseSummaryRow[]>("/api/keys/uses"),
+  });
+}
+
+/** Every workspace the caller can see, with its database and size. */
+export function useWorkspaceDatabases() {
+  return useQuery({
+    queryKey: ["workspace-databases"],
+    queryFn: () => api.get<WorkspaceDatabaseRow[]>("/api/databases"),
   });
 }
 

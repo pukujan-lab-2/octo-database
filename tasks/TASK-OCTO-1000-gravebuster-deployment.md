@@ -142,4 +142,27 @@ Blocked/uncertain:
 Next:
 - Create pull request with auto-merge to main for deployment hardening fixes
 
+### 2026-11-01 01:46:45 UTC — claude-opus-5-5
 
+<!-- continuity:checkpoint {"agent":"claude-opus-5-5","blocked":[],"changed":["none"],"completed":["Since 2026-10-26: #339 analytics specs, #345/#348 MCP tool surface, #354 confirm window, #358 env-to-vault, #381/#383 rerank, #394 VPS compose overlay, #396 RAG access once per search, #397 halfvec 512, #401 Phoenix traces, #404 vault relay fix, #405 Umami per workspace, #407 and #411-#413 agent stack 1.0.1 to 1.0.4, #408 CLAUDE.md loads AGENTS.md, #337 phone dialogs and secret-storage CTA","Promoted main bcd9bfb to production via #406 (production 3d78888)"],"decisions":["Live app runs on the VPS (ssh vps, ~/apps/octo), Komodo stack octo; octo-deploy-on-push deploys when production moves. Hosting is decided in Pukujan-lab/server-management vps/PLAN.md. The MacBook Pro keeps on-demand AI jobs only."],"evidence":["VPS ~/apps/octo at 3d78888; octo-api and octo-web healthy after the deploy; https://octodb.design-bakery.com/health ok","Stack lock .coord/hotload.lock.json at agent-stack-train ad6d9d6 = certified 1.0.4"],"evidence_class":"observed","next_action":"Open feature issues: #400 Umami, #399 RAG graph step, #395 shared embed/rerank endpoints, #393 Retrieval/Deployments views, #391 filtered-search scan, #385 octo-graph volume; #410 rule enforcement for Claude sessions","protocol_version":"0.1.0-draft","schema":"project-continuity.checkpoint.v1","task_id":"OCTO-1000","timestamp":"2026-11-01T01:46:45Z"} -->
+<!-- continuity:checkpoint-operation {"payload_sha256":"a87f54ac6b856efeeacf06f0e8fa543945fa76e419de002461dc1ca4894579aa","request_id":"d2a094a9197b4fd8a31a841846b194de","schema":"project-continuity.checkpoint-operation.v1","task_id":"OCTO-1000"} -->
+
+Completed:
+- Since 2026-10-26: #339 analytics specs, #345/#348 MCP tool surface, #354 confirm window, #358 env-to-vault, #381/#383 rerank, #394 VPS compose overlay, #396 RAG access once per search, #397 halfvec 512, #401 Phoenix traces, #404 vault relay fix, #405 Umami per workspace, #407 and #411-#413 agent stack 1.0.1 to 1.0.4, #408 CLAUDE.md loads AGENTS.md, #337 phone dialogs and secret-storage CTA
+- Promoted main bcd9bfb to production via #406 (production 3d78888)
+
+Evidence:
+- VPS ~/apps/octo at 3d78888; octo-api and octo-web healthy after the deploy; https://octodb.design-bakery.com/health ok
+- Stack lock .coord/hotload.lock.json at agent-stack-train ad6d9d6 = certified 1.0.4
+
+Decisions:
+- Live app runs on the VPS (ssh vps, ~/apps/octo), Komodo stack octo; octo-deploy-on-push deploys when production moves. Hosting is decided in Pukujan-lab/server-management vps/PLAN.md. The MacBook Pro keeps on-demand AI jobs only.
+
+Changed:
+- none
+
+Blocked/uncertain:
+- none
+
+Next:
+- Open feature issues: #400 Umami, #399 RAG graph step, #395 shared embed/rerank endpoints, #393 Retrieval/Deployments views, #391 filtered-search scan, #385 octo-graph volume; #410 rule enforcement for Claude sessions

@@ -517,6 +517,21 @@ A dashboard route keeps working through its pinned relay URL,
 `ANY /api/vault/relay/<routeKey>/…`, which forwards the caller's path below the
 route's base URL. Use the proxy when the agent needs to choose the upstream.
 
+### When the stored item is an Octo key
+
+The target does not have to be a vendor. If the stored item is an Octo workspace key,
+a lease on it lets an agent that holds only a vault grant use Octo itself, with the
+narrow key and without the account key. Name Octo's API in `x-octo-target`:
+
+```bash
+curl -s https://octo.example/api/vault/proxy \
+  -H "Authorization: Bearer octo_tmp_…" \
+  -H "x-octo-target: https://octo.example/api/workspaces/<id>/otel/read/spans?limit=1"
+```
+
+`traces` and `sessions` read the same way, and `POST …/query` runs SQL. The workspace
+key stays inside its own workspace, so use the id it was minted for.
+
 ### 3. Renew, inspect, revoke
 
 ```bash
@@ -637,7 +652,9 @@ key**: one stored item, relay-only, never reveals the vendor secret. To use a ve
 key, list the cabinet with the grant, mint a working key for the item you need
 (`POST /api/vault/open/lease`), then send requests to `/api/vault/proxy` with the
 working key and the vendor URL in `x-octo-target`. The key is not pinned to a base
-URL; any `http(s)` target works.
+URL; any `http(s)` target works, including Octo's own API when the stored item is an
+Octo workspace key. Call the MCP `guide` tool (topics `recipes`, `vault`, `traces`)
+before guessing endpoints.
 The vault lives under `/api/vault/` on the same Octo host — there is no separate
 vault subdomain, and `401` on `/api/workspaces` or `/api/files` with a vault token is
 expected, not a sign the vault is missing.

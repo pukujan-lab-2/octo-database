@@ -48,15 +48,18 @@ infrastructure replaceable.
 | **Publishing** | Copy one file to the public bucket and get a stable HTTPS URL; unpublish reverses it |
 | **Archival** | Move files to Google Drive cold storage and restore them on demand |
 | **Gallery and shares** | Image and video gallery with thumbnails, plus scoped public share links |
-| **Analytics** | Register immutable Parquet dataset versions, run named query specs through DuckDB, fetch result artifacts |
-| **Retrieval** | Ingest documents, chunk and embed them locally, then query by similarity |
+| **Analytics** | Register immutable Parquet dataset versions, run named query specs through DuckDB, save workspace specs, append data, and schedule write-back runs |
+| **Retrieval** | Ingest documents (PDF readers tried in order), chunk and embed them as 512-dimension `halfvec`, then run hybrid vector-plus-keyword search with optional reranking. Filter by document, title prefix or latest version; filtered searches walk the HNSW and keyword indexes instead of scanning |
 | **Epistemic ledger** | Bitemporal claims, beliefs, and evidence with as-of queries; a correction is a new row, never a rewrite |
 | **Graph** | Rebuildable FalkorDB projection of the ledger, with health reporting and read-only Cypher queries |
 | **Jobs and operations** | Background job queue plus classified operational failure events and summaries |
+| **Traces and evals** | Send OTLP/HTTP traces and eval scores with your Octo key; Octo forwards them to one Phoenix, one project per workspace. Agents read them back through the same key |
+| **UX analytics** | A Umami website per workspace, members added as team users, clicks, replays and heatmaps readable by agents |
 | **Credential vault** | Store credentials, mint leases, and relay working keys to vendor APIs without handing plaintext to an agent |
-| **API keys** | Account-wide or workspace-scoped keys over four real scopes, named key classes, MFA step-up, and a human confirmation gate on creation |
-| **MCP server** | 29 tools over Streamable HTTP at `/mcp`, with OAuth 2.1 authorization for hosted clients |
-| **Control dashboard** | Overview, files, gallery, analytics, operations, access, and vault views, with switchable design systems |
+| **API keys** | Account-wide or workspace-scoped keys over four real scopes, named key classes, MFA step-up, and a human confirmation gate on creation. Every key use is logged (kept 30 days), with alerts on revoked or expired keys and new IPs |
+| **MCP server** | 40 tools over Streamable HTTP at `/mcp`, listing only what the calling key can use, with a `guide` tool and OAuth 2.1 authorization for hosted clients |
+| **Guest cleanup** | Guest accounts and their empty sandbox workspaces are deleted after 7 days |
+| **Control dashboard** | Overview, files, gallery, analytics, operations, services, access, and vault views, with switchable design systems |
 
 Capability discovery is live: `GET /api/capabilities` returns the actions,
 methods, paths, and required scopes available to the calling credential, minus
@@ -71,7 +74,7 @@ anything its provider configuration cannot serve.
 | **HTTP API** | `https://<host>/api/...` with `Authorization: Bearer octo_live_...` |
 | **MCP** | `POST /mcp` (Streamable HTTP); bearer key or OAuth access token |
 | **SQL** | `POST /api/workspaces/<id>/query`, or a direct Postgres connection from the provisioning call |
-| **Web UI** | The dashboard served at the site root |
+| **Web UI** | The public homepage and feature pages at the site root, the dashboard after sign-in, and the docs at `/docs` |
 
 The API and the MCP server expose the same capabilities; the UI is a client of
 the API.

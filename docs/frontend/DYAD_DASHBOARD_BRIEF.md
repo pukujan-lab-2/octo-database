@@ -246,7 +246,7 @@ export interface GalleryItem {
 }
 ```
 
-Source definitions: [`src/types/auth.ts`](../../src/types/auth.ts), [`src/storage/file-service.ts`](../../src/storage/file-service.ts), [`src/jobs/job-service.ts`](../../src/jobs/job-service.ts), [`src/media/gallery-service.ts`](../../src/media/gallery-service.ts), [`src/api/keys.ts`](../../src/api/keys.ts), [`src/api/capabilities.ts`](../../src/api/capabilities.ts), and [`src/ui/OperationsPage.tsx`](../../src/ui/OperationsPage.tsx). Routes and actual response construction live in [`src/server/index.ts`](../../src/server/index.ts); current browser integration lives in [`src/main.tsx`](../../src/main.tsx).
+Source definitions: [`src/types/auth.ts`](../../src/types/auth.ts), [`src/storage/file-service.ts`](../../src/storage/file-service.ts), [`src/jobs/job-service.ts`](../../src/jobs/job-service.ts), [`src/media/gallery-service.ts`](../../src/media/gallery-service.ts), [`src/api/keys.ts`](../../src/api/keys.ts), and [`src/api/capabilities.ts`](../../src/api/capabilities.ts). Routes and actual response construction live in [`src/server/index.ts`](../../src/server/index.ts); current browser integration lives in `frontend/src/main.tsx`.
 
 ## Proposed future metrics contracts (not implemented)
 

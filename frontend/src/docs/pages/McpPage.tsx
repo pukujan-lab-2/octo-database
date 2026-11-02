@@ -3,6 +3,10 @@ import { Callout, C, CodeBlock, H2, P, PageHeader, UL } from "@/docs/blocks";
 
 const TOOLS: { group: string; tools: string[] }[] = [
   {
+    group: "Orientation",
+    tools: ["guide", "whoami"],
+  },
+  {
     group: "Workspaces and keys",
     tools: ["list_workspaces", "create_workspace", "mint_key", "provision_database", "query_workspace_database"],
   },
@@ -34,7 +38,27 @@ const TOOLS: { group: string; tools: string[] }[] = [
   },
   {
     group: "Analytics",
-    tools: ["register_dataset", "query_dataset", "get_analytics_query_status", "get_analytics_result"],
+    tools: [
+      "register_dataset",
+      "query_dataset",
+      "register_analytics_spec",
+      "list_analytics_specs",
+      "schedule_analytics",
+      "list_analytics_schedules",
+      "get_analytics_query_status",
+      "get_analytics_result",
+    ],
+  },
+  {
+    group: "Traces and UX analytics",
+    tools: [
+      "read_traces",
+      "record_eval_scores",
+      "get_trace_link",
+      "get_ux_analytics",
+      "enable_ux_analytics",
+      "read_ux_analytics",
+    ],
   },
 ];
 
@@ -78,7 +102,7 @@ export function McpPage() {
 
       <H2 id="tools">Tools</H2>
       <P>
-        The tool list follows the HTTP surface, one tool per action. The same scope and role rules
+        There are 40 tools, and a key is shown only the ones it can use. Call <C>guide</C> with a topic for a recipe. The tool list follows the HTTP surface, one tool per action. The same scope and role rules
         apply — an MCP call is authorized exactly as the equivalent HTTP call would be.
       </P>
       <div className="mt-4 space-y-5">

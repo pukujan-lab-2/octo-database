@@ -33,6 +33,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       { slug: "files", href: "/docs/files", title: "Files and publishing" },
       { slug: "analytics", href: "/docs/analytics", title: "Analytics" },
       { slug: "retrieval", href: "/docs/retrieval", title: "Retrieval and graph" },
+      { slug: "observability", href: "/docs/observability", title: "Traces and UX analytics" },
       { slug: "vault", href: "/docs/vault", title: "Vault" },
       { slug: "mcp", href: "/docs/mcp", title: "MCP" },
     ],

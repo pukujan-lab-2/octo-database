@@ -505,6 +505,19 @@ describe('Octo MCP tool surface', () => {
     expect(one.guide).toContain('ws:<slug>@<n>');
   });
 
+  it('advertises every topic guide serves, and explains the vault proxy to Octo', async () => {
+    const client = await connect(apiWith(200, '{}'));
+    const list = JSON.parse(textOf(await client.callTool({ name: 'guide', arguments: {} })));
+    const guide = (await client.listTools()).tools.find((tool) => tool.name === 'guide')!;
+    const described = JSON.stringify(guide);
+    for (const topic of list.topics) expect(described).toContain(topic);
+    expect(list.topics).toEqual(expect.arrayContaining(['traces', 'vault']));
+    const vault = JSON.parse(textOf(await client.callTool({ name: 'guide', arguments: { topic: 'vault' } })));
+    for (const part of ['octo_live_', 'octo_vault_', 'octo_tmp_', '/api/vault/open/lease', '/api/vault/proxy', 'x-octo-target', "Octo's own API"]) {
+      expect(vault.guide).toContain(part);
+    }
+  });
+
   it('returns compact JSON', async () => {
     const client = await connect(apiWith(200, '{"a":1}'));
     expect(textOf(await client.callTool({ name: 'whoami', arguments: {} }))).toBe('{"a":1}');

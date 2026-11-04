@@ -339,6 +339,14 @@ export const OCTO_CAPABILITIES: CapabilityDescriptor[] = [
       "Read the workspace's own Phoenix project: <resource> is spans, traces, sessions, span_annotations, trace_annotations, session_annotations or annotation_configs. Query parameters (limit, cursor, start_time, end_time, trace_id, name, status_code, span_ids ...) pass through to Phoenix. The project is derived from the workspace, never passed by the caller.",
   },
   {
+    action: 'phoenix.datasets',
+    method: 'POST',
+    path: '/api/workspaces/<id>/otel/v1/datasets/upload',
+    requiredScope: 'write',
+    description:
+      "Keep evaluation cases and results in the workspace's Phoenix with arize-phoenix-client pointed at /api/workspaces/<id>/otel. Open routes: v1/datasets (upload, list, get, examples, versions), v1/datasets/<id>/experiments, v1/experiments/<id> (get, json, csv, runs), v1/experiment_evaluations, v1/projects. Octo records what the workspace created and answers 404 for any other id; dataset names are private to the workspace. Delete and every other Phoenix route are not open.",
+  },
+  {
     action: 'traces.link',
     method: 'GET',
     path: '/api/workspaces/<id>/otel/link',

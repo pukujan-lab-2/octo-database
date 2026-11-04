@@ -4065,3 +4065,53 @@ export async function dbRegisterAnalyticsResult(input: {
   return existing;
 }
 
+
+export type PhoenixResourceKind = 'dataset' | 'version' | 'example' | 'experiment' | 'run';
+
+/** Records which workspace made each Phoenix dataset, version, experiment or run. */
+export async function dbRecordPhoenixResources(
+  workspaceId: string,
+  resources: Array<{ kind: PhoenixResourceKind; id: string }>
+): Promise<void> {
+  // A dataset read can list thousands of examples; keep each statement well under
+  // Postgres's 65535-parameter limit.
+  for (let start = 0; start < resources.length; start += 5000) {
+    const values: string[] = [];
+    const params: unknown[] = [workspaceId];
+    for (const resource of resources.slice(start, start + 5000)) {
+      params.push(resource.kind, resource.id);
+      values.push(`($${params.length - 1}, $${params.length}, $1)`);
+    }
+    await query(
+      `INSERT INTO octo.phoenix_resources (kind, phoenix_id, workspace_id)
+       VALUES ${values.join(', ')}
+       ON CONFLICT (kind, phoenix_id) DO NOTHING`,
+      params
+    );
+  }
+}
+
+/** True when this workspace made the Phoenix resource. Anyone else's id is not theirs to read. */
+export async function dbPhoenixResourceOwned(
+  workspaceId: string,
+  kind: PhoenixResourceKind,
+  phoenixId: string
+): Promise<boolean> {
+  const rows = await query<{ one: number }>(
+    `SELECT 1 AS one FROM octo.phoenix_resources
+     WHERE workspace_id = $1 AND kind = $2 AND phoenix_id = $3`,
+    [workspaceId, kind, phoenixId]
+  );
+  return rows.length > 0;
+}
+
+/** Phoenix ids this workspace made, of one kind. */
+export async function dbListPhoenixResourceIds(workspaceId: string, kind: PhoenixResourceKind): Promise<string[]> {
+  const rows = await query<{ phoenixId: string }>(
+    `SELECT phoenix_id AS "phoenixId" FROM octo.phoenix_resources
+     WHERE workspace_id = $1 AND kind = $2
+     ORDER BY created_at`,
+    [workspaceId, kind]
+  );
+  return rows.map((row) => row.phoenixId);
+}

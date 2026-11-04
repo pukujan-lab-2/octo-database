@@ -71,6 +71,14 @@ export function grantExpiresAt(hours: number, now = Date.now()): string {
   return new Date(now + hours * 60 * 60 * 1000).toISOString();
 }
 
+/**
+ * The item's own url as a lease's default target, when it names a place the relay
+ * can reach: http(s), or ws(s) for a socket vendor. Anything else is no default.
+ */
+export function defaultTargetFromItemUrl(url: string | null): string | null {
+  return url && /^(https?|wss?):\/\//i.test(url) ? url : null;
+}
+
 export function parseLeaseDays(input: unknown): { ok: true; days: number } | { ok: false; error: string } {
   if (input === undefined || input === null || input === '') {
     return { ok: true, days: LEASE_DEFAULT_DAYS };

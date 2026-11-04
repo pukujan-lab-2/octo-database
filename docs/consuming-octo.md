@@ -465,6 +465,10 @@ The response carries the working key and the proxy entry point:
 The raw key is shown once. `routes` lists any dashboard routes the item already
 had; a lease no longer needs one.
 
+Read the working key from `rawSecret`, by field name. `lease.prefix` is display only,
+but it also starts with `octo_tmp_`, so a pattern scan of the body finds it first, and
+the proxy then answers `WORKING_KEY_INVALID`.
+
 ### 2. Send it wherever the vendor is
 
 Name the full upstream URL in `x-octo-target` (or `?target=`, or as the path after
@@ -543,18 +547,21 @@ curl -s -X POST https://octo.example/api/vault/lease/renew \
 
 # what is this key for?
 curl -s https://octo.example/api/vault/lease/info -H "Authorization: Bearer octo_tmp_…"
+
+# end this key now, for example after it leaked
+curl -s -X POST https://octo.example/api/vault/lease/revoke -H "Authorization: Bearer octo_tmp_…"
 ```
 
-The owner lists and revokes working keys from the vault dashboard
-(`GET /api/vault/leases`, `DELETE /api/vault/leases/<id>`). A revoked or expired key
-answers `401`.
+A working key can revoke only itself. The owner lists and revokes any working key from
+the vault dashboard (`GET /api/vault/leases`, `DELETE /api/vault/leases/<id>`); a grant
+cannot revoke the keys it minted. A revoked or expired key answers `401`.
 
 ### What a working key cannot do
 
 It is not a session, a grant, or an API key. It cannot open the cabinet, list vault
 items, list grants, create workspaces, or call any path outside
-`/api/vault/proxy`, `/api/vault/relay/<routeKey>`, `/api/vault/lease/renew`, and
-`/api/vault/lease/info`. Every other Octo path answers `401`.
+`/api/vault/proxy`, `/api/vault/relay/<routeKey>`, `/api/vault/lease/renew`,
+`/api/vault/lease/revoke`, and `/api/vault/lease/info`. Every other Octo path answers `401`.
 
 That fence is the point: a working key is the only vault token an agent should hold.
 
@@ -569,11 +576,17 @@ API, under `/api/vault/`. If a token returns `401` on `/api/files`, `/api/shares
 | `GET /api/vault/open` | grant | Read the cabinet **inventory**. Never returns a stored secret. |
 | `POST /api/vault/open/lease` | grant | Mint a working key for one item. |
 | `POST /api/vault/lease/renew` | working key | Extend a working key. |
+| `POST /api/vault/lease/revoke` | working key | End this working key (only itself). |
 | `GET /api/vault/lease/info` | working key | Describe a working key. |
 | `ANY /api/vault/proxy[/<target>]` | working key | Call any vendor URL through Octo. |
 | `ANY /api/vault/relay/<routeKey>/…` | working key | Call a dashboard route's vendor through Octo. |
 | `GET /api/vault/grants`, `DELETE /api/vault/grants/<id>` | session | Owner lists and revokes grants. |
 | `GET /api/vault/leases`, `DELETE /api/vault/leases/<id>` | session | Owner lists and revokes working keys. |
+
+A `403` whose body is the plain text `error code: 1010` is Cloudflare, not Octo. It
+blocks some default client signatures (Python's `urllib` is one) before the request
+reaches Octo, so it says nothing about your token. Send an explicit `User-Agent`, or
+use curl or httpx.
 
 A token that is valid for one row of that table is not valid for another. In
 particular, a grant does **not** authenticate `/api/workspaces`, `/api/files`, or the

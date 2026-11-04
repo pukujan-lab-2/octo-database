@@ -14,6 +14,7 @@ import { decryptSecret, encryptSecret } from '../lib/mfa';
 import { buildRouteProbe, checkVaultItem, classifyRouteProbe } from '../lib/vault-health';
 import {
   BULK_MAX_LINES,
+  defaultTargetFromItemUrl,
   grantExpiresAt,
   inferVaultGroup,
   leaseExpiresAt,
@@ -772,7 +773,7 @@ function leaseRecipe(
     };
   }
   return {
-    baseUrl: item.url && /^https?:\/\//i.test(item.url) ? item.url : null,
+    baseUrl: defaultTargetFromItemUrl(item.url),
     authScheme: 'bearer',
     authHeader: null,
     bodyField: null,

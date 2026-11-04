@@ -38,6 +38,7 @@ import {
   dbConsumeVaultLeaseByKey,
   dbGetVaultLeaseByKey,
   dbRenewVaultLease,
+  dbRevokeVaultLeaseByKey,
   dbUpdateVaultRouteHealth,
   type ConsumedVaultLease,
   type ConsumedVaultLeaseAny,
@@ -359,6 +360,26 @@ export const handleVaultRelayRoutes: RouteHandler = async (req, res, url) => {
       return true;
     }
     sendJson(res, 200, { expiresAt });
+    return true;
+  }
+
+  // A working key can end itself, so an agent that leaks it can contain the leak
+  // without waiting for the owner. It can revoke no other key.
+  if (path === '/api/vault/lease/revoke' && req.method === 'POST') {
+    const { key, ambiguous } = extractTempKey(req, url);
+    if (ambiguous) {
+      sendJson(res, 400, { error: 'WORKING_KEY_AMBIGUOUS: send exactly one working key.' });
+      return true;
+    }
+    if (!key) {
+      sendJson(res, 401, { error: 'WORKING_KEY_MISSING: attach the working key.' });
+      return true;
+    }
+    if (!(await dbRevokeVaultLeaseByKey(hashApiKeySecret(key)))) {
+      sendJson(res, 401, { error: 'LEASE_EXPIRED: that working key has expired or been revoked.' });
+      return true;
+    }
+    sendJson(res, 200, { revoked: true });
     return true;
   }
 

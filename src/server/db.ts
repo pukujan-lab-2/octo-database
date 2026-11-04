@@ -3458,6 +3458,18 @@ export async function dbRenewVaultLease(keyHash: string, days: number): Promise<
   return rows[0]?.expiresAt ?? null;
 }
 
+/** Revokes the one lease this working key belongs to. Service path: no session. */
+export async function dbRevokeVaultLeaseByKey(keyHash: string): Promise<boolean> {
+  const rows = await queryService<{ id: string }>(
+    `UPDATE octo.vault_leases
+     SET revoked_at = now()
+     WHERE key_hash = $1 AND revoked_at IS NULL
+     RETURNING id`,
+    [keyHash]
+  );
+  return rows.length > 0;
+}
+
 /** Introspection for the holder of a working key. Service path: no session. */
 export async function dbGetVaultLeaseByKey(keyHash: string): Promise<VaultLeaseRow | null> {
   const rows = await queryService<VaultLeaseRow>(

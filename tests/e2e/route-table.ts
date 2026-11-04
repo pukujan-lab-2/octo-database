@@ -73,6 +73,7 @@ export const ROUTE_TABLE: RouteSpec[] = [
   { method: 'GET', path: '/api/vault/proxy', tenancy: 'token', scope: null, source: 'src/routes/vault-relay.ts' },
   { method: 'GET', path: '/api/vault/proxy/probe', tenancy: 'token', scope: null, source: 'src/routes/vault-relay.ts' },
   { method: 'POST', path: '/api/vault/lease/renew', tenancy: 'token', scope: null, source: 'src/routes/vault-relay.ts' },
+  { method: 'POST', path: '/api/vault/lease/revoke', tenancy: 'token', scope: null, source: 'src/routes/vault-relay.ts' },
   { method: 'GET', path: '/api/vault/lease/info', tenancy: 'token', scope: null, source: 'src/routes/vault-relay.ts' },
   { method: 'GET', path: '/api/vault/relay/probe', tenancy: 'token', scope: null, source: 'src/routes/vault-relay.ts' },
 

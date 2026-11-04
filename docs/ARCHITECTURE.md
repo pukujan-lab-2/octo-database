@@ -47,7 +47,7 @@ A person's own session is never limited by scopes. A workspace key works only on
 
 **Roles** in a workspace, from most to least: `owner`, `admin`, `operator`, `member` (`src/types/auth.ts`). `member` reads. `operator` uploads, publishes, ingests and runs jobs. `admin` deletes, manages shares and enables UX analytics. Only `owner` deletes the workspace. The platform owner passes every membership check. Memberships are only ever created as `owner` today; there is no invite route.
 
-**The confirm gate** (`src/server/confirm.ts`) stands in front of risky changes: creating or deleting a workspace, minting or re-scoping a key, and every vault change. The person asks for a 6-character code (`POST /api/me/confirm-challenge`, valid 10 minutes, single use), plus a TOTP code if they enrolled MFA. After a full pass, further changes within **two minutes** need no code. API keys can never confirm; owner agent keys always pass. Codes and the two-minute window live in process memory.
+**The confirm gate** (`src/server/confirm.ts`) stands in front of risky changes: creating or deleting a workspace, minting or re-scoping a key, and every vault change. The person asks for a 6-character code (`POST /api/me/confirm-challenge`, valid 10 minutes, single use), plus a TOTP code if they enrolled MFA. After a full pass, further changes within **fifteen minutes** need no code. API keys can never confirm; owner agent keys always pass. Codes and the fifteen-minute window live in process memory.
 
 ## How workspaces are kept apart
 
@@ -188,7 +188,7 @@ These are true of `main` today. Each is a fact to plan around, not a decision. T
 - **A request already past authentication finishes after its key is revoked.** Revocation stops new requests only.
 - **A Phoenix request already past the cookie check is still forwarded** if the owner is demoted or the cookie expires just after the check. The next request is refused.
 - **Deleting a workspace leaves its files** in R2 and Drive and reports them as `orphanedObjects`. Deleting an archived file does not delete its Drive copy.
-- **Confirm codes and the two-minute window are in memory**, lost on restart and not shared between processes. Revoking a key needs the `delete` scope but no confirmation.
+- **Confirm codes and the fifteen-minute window are in memory**, lost on restart and not shared between processes. Revoking a key needs the `delete` scope but no confirmation.
 - **Google sign-in sends no OAuth `state` parameter**, and reads the `id_token` without checking its signature (it comes straight from Google's token endpoint).
 - **`files.content_hash` is not a hash**; it holds `stored-<bytes>`. The real SHA-256 is `archive_hash`.
 - The root `.env.example` still says `OCTO_EMBEDDING_DIMENSIONS=1024`; the code and the deploy example use 512.

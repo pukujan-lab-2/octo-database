@@ -25,12 +25,12 @@ describe('confirm challenge', () => {
     expect(acceptConfirmChallenge(principalId, issued.code, 5_000 + 10 * 60 * 1000)).toBe(false);
   });
 
-  it('keeps a confirmation window open for two minutes, per person', () => {
+  it('keeps a confirmation window open for fifteen minutes, per person', () => {
     const principalId = `person-${Date.now()}-window`;
     expect(inConfirmWindow(principalId, 1_000)).toBe(false);
     openConfirmWindow(principalId, 1_000);
-    expect(inConfirmWindow(principalId, 1_000 + 119_000)).toBe(true);
+    expect(inConfirmWindow(principalId, 1_000 + 899_000)).toBe(true);
     expect(inConfirmWindow(`${principalId}-other`, 1_000)).toBe(false);
-    expect(inConfirmWindow(principalId, 1_000 + 120_000)).toBe(false);
+    expect(inConfirmWindow(principalId, 1_000 + 900_000)).toBe(false);
   });
 });

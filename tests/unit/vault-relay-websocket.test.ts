@@ -174,6 +174,19 @@ describe.each([
   });
 });
 
+describe('a lease whose default upstream is a ws:// url', () => {
+  it('resolves a relative proxy path and a relay route against it', async () => {
+    lease.baseUrl = vendorOrigin.replace('http', 'ws');
+    for (const path of ['/api/vault/proxy/v1/listen', '/api/vault/relay/vendor/v1/listen']) {
+      seenUrls.length = 0;
+      const conn = await upgrade(path);
+      expect(conn.head).toMatch(/^HTTP\/1.1 101 /);
+      expect(seenUrls[0]).toBe('/v1/listen');
+      conn.close();
+    }
+  });
+});
+
 describe('WebSocket outside the vault', () => {
   it('refuses an upgrade on any other path', async () => {
     const conn = await upgrade('/api/files');

@@ -411,6 +411,11 @@ export const handleVaultRelayRoutes: RouteHandler = async (req, res, url) => {
  */
 const STATUS_TEXT: Record<number, string> = { 400: 'Bad Request', 401: 'Unauthorized', 404: 'Not Found', 502: 'Bad Gateway' };
 
+/** ws(s):// names the same host as http(s)://; the upgrade headers carry the rest. */
+function wsToHttp(raw: string): string {
+  return raw.replace(/^ws(s?):\/\//i, 'http$1://');
+}
+
 function refuseUpgrade(socket: Duplex, status: number, message: string): void {
   const body = JSON.stringify({ error: message });
   socket.end(
@@ -469,7 +474,7 @@ export async function handleVaultRelayUpgrade(req: IncomingMessage, socket: Dupl
     let built: BuiltUpstreamRequest | { error: string; status: number };
     if (relayMatch) {
       built = buildUpstreamRequest({
-        route: { ...lease, baseUrl: lease.baseUrl ?? '' },
+        route: { ...lease, baseUrl: wsToHttp(lease.baseUrl ?? '') },
         secret,
         tempKey: key,
         method: 'GET',
@@ -483,9 +488,8 @@ export async function handleVaultRelayUpgrade(req: IncomingMessage, socket: Dupl
         return refuseUpgrade(socket, 400, 'TARGET_REQUIRED: name the vendor URL in x-octo-target, ?target=, or the path.');
       }
       built = buildProxyRequest({
-        // ws(s):// names the same host as http(s)://; the upgrade headers carry the rest.
-        targetUrl: target.replace(/^ws(s?):\/\//i, 'http$1://'),
-        route: { ...lease, baseUrl: lease.baseUrl ?? target },
+        targetUrl: wsToHttp(target),
+        route: { ...lease, baseUrl: wsToHttp(lease.baseUrl ?? target) },
         secret,
         tempKey: key,
         headers: req.headers,

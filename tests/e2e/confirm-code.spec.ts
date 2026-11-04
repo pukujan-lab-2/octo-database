@@ -29,7 +29,7 @@ test('a human types a fresh code to mint a workspace key, with no saved password
   expect(minted.status()).toBe(201);
 });
 
-test('after one confirmed change, the next one needs no code for two minutes', async ({ request }) => {
+test('after one confirmed change, the next one needs no code for fifteen minutes', async ({ request }) => {
   const guest = await request.post('/api/auth/guest', { data: { displayName: 'Window guest' } });
   expect(guest.status()).toBe(201);
   const session = (await guest.json()) as { sessionToken: string; workspace: { id: string } };

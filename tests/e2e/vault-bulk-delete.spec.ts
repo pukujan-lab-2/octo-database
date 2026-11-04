@@ -87,7 +87,7 @@ test.describe('vault bulk delete', () => {
     const label = `Guarded ${randomUUID().slice(0, 8)}`;
     const id = await store(request, session.sessionToken, label);
 
-    // A missing code would pass here: the save above opened the two-minute window.
+    // A missing code would pass here: the save above opened the fifteen-minute window.
     const wrong = await request.post('/api/vault/items/bulk-delete', {
       headers: bearer(session.sessionToken),
       data: { ids: [id], confirmSecret: 'not-the-code' },

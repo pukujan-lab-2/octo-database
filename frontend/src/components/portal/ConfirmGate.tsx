@@ -88,7 +88,7 @@ export function ConfirmGate({
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">
         Type the code below exactly as issued. Once it goes through, further changes need no codes
-        for two minutes.
+        for fifteen minutes.
       </p>
 
       <div className="flex flex-wrap items-center gap-2">

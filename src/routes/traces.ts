@@ -10,8 +10,9 @@
  * Reads go the same way: GET .../otel/read/<resource> asks Phoenix for the
  * workspace's own project only. The project is the workspace slug in the Phoenix
  * path, never a caller value, and only project-scoped resources are allowed:
- * Phoenix's datasets, experiments, prompts and lookups by global id are not
- * separated per workspace, so they are not exposed (#442).
+ * Phoenix's prompts and lookups by global id are not separated per workspace, so
+ * they are not exposed (#442). Datasets and experiments are not project-scoped
+ * either; they have their own routes that track ownership (phoenix-datasets.ts).
  *
  *   OCTO_PHOENIX_URL         internal Phoenix base URL, e.g. http://octo-phoenix:6006.
  *   OCTO_PHOENIX_SECRET      Phoenix's PHOENIX_ADMIN_SECRET (bearer token).

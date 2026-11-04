@@ -6,6 +6,7 @@ import {
   parseGrantHours,
   parseLeaseDays,
   parseUrlKind,
+  defaultTargetFromItemUrl,
   parseVaultItem,
   parseVaultRoute,
   routeKeySlug,
@@ -183,5 +184,15 @@ describe('credential routes', () => {
   it('slugifies a name', () => {
     expect(routeKeySlug('CKFF EU edge')).toBe('ckff-eu-edge');
     expect(routeKeySlug('  ')).toBe('route');
+  });
+});
+
+describe('a lease default target from the item url', () => {
+  it('keeps http(s) and ws(s) urls and drops anything else', () => {
+    expect(defaultTargetFromItemUrl('https://api.deepgram.com')).toBe('https://api.deepgram.com');
+    expect(defaultTargetFromItemUrl('wss://api.deepgram.com/v1/listen')).toBe('wss://api.deepgram.com/v1/listen');
+    expect(defaultTargetFromItemUrl('ws://localhost:9000')).toBe('ws://localhost:9000');
+    expect(defaultTargetFromItemUrl('ftp://files.example.com')).toBeNull();
+    expect(defaultTargetFromItemUrl(null)).toBeNull();
   });
 });

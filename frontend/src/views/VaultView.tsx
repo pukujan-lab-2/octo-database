@@ -61,7 +61,7 @@ import { toast } from "@/utils/toast";
 
 type Kind = "login" | "token" | "url" | "note";
 type Health = "unchecked" | "healthy" | "weak" | "stale";
-type AuthScheme = "bearer" | "x-api-key" | "basic" | "query" | "body_json" | "path";
+type AuthScheme = "bearer" | "token" | "x-api-key" | "basic" | "query" | "body_json" | "path";
 type RouteHealth = "unknown" | "ok" | "unauthorized" | "forbidden_group" | "unreachable";
 type UrlKind = "api_base" | "api_endpoint" | "docs" | "console" | "cors" | "s3_endpoint";
 
@@ -154,6 +154,7 @@ const ROUTE_TONE: Record<RouteHealth, PillTone> = {
 
 const SCHEMES: Array<{ value: AuthScheme; label: string }> = [
   { value: "bearer", label: "Bearer token" },
+  { value: "token", label: "Token header (Deepgram)" },
   { value: "x-api-key", label: "x-api-key header" },
   { value: "basic", label: "Basic auth" },
   { value: "query", label: "Query parameter" },

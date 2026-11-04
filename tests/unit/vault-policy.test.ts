@@ -126,6 +126,15 @@ describe('credential routes', () => {
     if (parsed.ok) expect(parsed.value.routeKey).toBeNull();
   });
 
+  it('accepts a token route on a websocket base (Deepgram)', () => {
+    const parsed = parseVaultRoute({
+      name: 'Deepgram',
+      baseUrl: 'wss://api.deepgram.com',
+      authScheme: 'token',
+    });
+    expect(parsed.ok).toBe(true);
+  });
+
   it('accepts a body_json route with its leaf', () => {
     const parsed = parseVaultRoute({
       name: 'Tavily',

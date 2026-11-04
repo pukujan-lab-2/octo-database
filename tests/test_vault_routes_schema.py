@@ -44,6 +44,13 @@ class VaultRouteSchemaTests(unittest.TestCase):
         )
         self.assertIn("CONSTRAINT vault_route_scheme_fields CHECK", self.sql)
 
+    def test_token_scheme_migration(self) -> None:
+        sql = (MIGRATION_PATH.parent / "20261104180000_vault_token_auth_scheme.sql").read_text(encoding="utf-8")
+        self.assertEqual(
+            sql.count("('bearer', 'token', 'x-api-key', 'basic', 'query', 'body_json', 'path')"), 2
+        )
+        self.assertIn("OR auth_scheme IN ('bearer', 'token', 'basic')", sql)
+
     def test_health_states(self) -> None:
         self.assertIn(
             "'unknown', 'ok', 'unauthorized', 'forbidden_group', 'unreachable'",

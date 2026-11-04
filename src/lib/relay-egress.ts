@@ -35,7 +35,7 @@ export interface BuiltUpstreamRequest {
 type IncomingHttpHeadersLike = Record<string, string | string[] | undefined>;
 
 /**
- * Pulls the working key out of wherever the caller put it: Bearer, Basic, the
+ * Pulls the working key out of wherever the caller put it: Bearer, Token, Basic, the
  * `x-api-key` header, the path, or a query parameter. Fails closed — no match
  * means the relay answers 401 and forwards nothing. Two *different* keys in
  * different positions are refused rather than guessed at; the same key in more
@@ -45,8 +45,9 @@ export function extractTempKey(req: IncomingMessage, url: URL): { key: string | 
   const keys = new Set<string>();
 
   const auth = req.headers['authorization'];
-  if (auth?.startsWith('Bearer ')) {
-    const value = auth.slice(7).trim();
+  const scheme = auth?.match(/^(Bearer|Token) /);
+  if (auth && scheme) {
+    const value = auth.slice(scheme[0].length).trim();
     if (TEMP_KEY_PATTERN.test(value)) keys.add(value);
   } else if (auth?.startsWith('Basic ')) {
     try {
@@ -121,6 +122,9 @@ function applyAuthScheme(input: {
   switch (input.route.authScheme) {
     case 'bearer':
       input.headers['Authorization'] = `Bearer ${input.secret}`;
+      break;
+    case 'token':
+      input.headers['Authorization'] = `Token ${input.secret}`;
       break;
     case 'x-api-key':
       input.headers[input.route.authHeader || 'x-api-key'] = input.secret;

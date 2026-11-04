@@ -20,6 +20,7 @@ import {
 import { Panel, StatusPill, type PillTone } from "@/components/portal/Panel";
 import { ConfirmGate } from "@/components/portal/ConfirmGate";
 import { CopyButton, EmptyState } from "@/components/portal/EmptyState";
+import { KeyGroup, KeyListControls, type StatusOption } from "@/components/portal/KeyListControls";
 import { OneTimeSecret } from "@/components/portal/OneTimeSecret";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -47,6 +48,15 @@ import { api, errorCode, errorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { MeResponse, Workspace } from "@/lib/types";
 import { confirmWindowOpen } from "@/lib/confirm-window";
+import {
+  countByStatus,
+  grantStatus,
+  groupRows,
+  leaseStatus,
+  relativeTime,
+  type GrantStatus,
+  type LeaseStatus,
+} from "@/lib/key-status";
 import { toast } from "@/utils/toast";
 
 type Kind = "login" | "token" | "url" | "note";
@@ -487,44 +497,15 @@ export function VaultView({
           </Button>
         }
       >
-        <div className="p-5">
-          {grants.length === 0 ? (
-            <EmptyState motif="keys" title="No grants yet" description="Mint one when you are about to hand a cabinet to an agent." />
-          ) : (
-            <ul className="space-y-2">
-              {grants.map((grant) => (
-                <li key={grant.id} className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2">
-                  <KeyRound className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">{grant.name}</span>
-                  <span className="num text-xs text-muted-foreground">{grant.prefix}</span>
-                  <StatusPill tone={grant.workspaceId ? "info" : "primary"}>{grant.workspaceId ? "workspace" : "account"}</StatusPill>
-                  {grant.decoy ? <StatusPill tone="warning">decoy</StatusPill> : <StatusPill tone="success">real</StatusPill>}
-                  {grant.trippedAt ? <StatusPill tone="danger">tripped</StatusPill> : null}
-                  <span className="text-xs text-muted-foreground">until {new Date(grant.expiresAt).toLocaleString()}</span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="ml-auto h-7 text-xs"
-                    onClick={async () => {
-                      const body = gate();
-                      if (!body) return;
-                      try {
-                        await api.del(`/api/vault/grants/${grant.id}`, body);
-                        toast.success("Grant revoked");
-                        afterGate();
-                        void reload();
-                      } catch (error) {
-                        onGateError(error);
-                      }
-                    }}
-                  >
-                    Revoke
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <GrantList
+          grants={grants}
+          gate={gate}
+          onError={onGateError}
+          onRevoked={() => {
+            afterGate();
+            void reload();
+          }}
+        />
       </Panel>
 
       <WorkingKeys
@@ -585,6 +566,29 @@ function WorkingKeys({
   onRevoked: () => void;
 }) {
   const queryClient = useQueryClient();
+  const [status, setStatus] = useState<LeaseStatus | "all">("live");
+  const [query, setQuery] = useState("");
+  const now = Date.now();
+
+  const counts = countByStatus(leases, LEASE_STATUSES, (lease) => leaseStatus(lease, now));
+  const options: StatusOption<LeaseStatus>[] = [
+    { value: "live", label: "Live", count: counts.live },
+    { value: "expired", label: "Expired", count: counts.expired },
+    { value: "revoked", label: "Revoked", count: counts.revoked },
+    { value: "all", label: "All", count: leases.length },
+  ];
+  const needle = query.trim().toLowerCase();
+  const shown = leases.filter(
+    (lease) =>
+      (status === "all" || leaseStatus(lease, now) === status) &&
+      (!needle || `${lease.itemLabel} ${lease.name} ${lease.prefix}`.toLowerCase().includes(needle)),
+  );
+  const groups = groupRows(
+    shown,
+    (lease) => lease.itemLabel,
+    (lease) => leaseStatus(lease, now) === "live",
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+  );
 
   async function revoke(lease: VaultLease) {
     const body = gate();
@@ -611,41 +615,170 @@ function WorkingKeys({
             description="An agent holding a grant names a stored key and Octo mints one for it. The key expires on its own and can be revoked here."
           />
         ) : (
-          <ul className="space-y-2" data-testid="vault-leases">
-            {leases.map((lease) => {
-              const expired = lease.revokedAt !== null || Date.parse(lease.expiresAt) <= Date.now();
-              return (
-                <li key={lease.id} className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2">
-                  <KeyRound className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">{lease.itemLabel}</span>
-                  <span className="text-xs text-muted-foreground">{lease.name}</span>
-                  <span className="num text-xs text-muted-foreground">{lease.prefix}</span>
-                  {expired ? (
-                    <StatusPill tone="danger">{lease.revokedAt ? "revoked" : "expired"}</StatusPill>
-                  ) : (
-                    <StatusPill tone="success">live</StatusPill>
-                  )}
-                  <span className="text-xs text-muted-foreground">until {new Date(lease.expiresAt).toLocaleString()}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {lease.lastUsedAt ? `used ${new Date(lease.lastUsedAt).toLocaleString()}` : "never used"}
-                  </span>
-                  {expired ? null : (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="ml-auto h-7 text-xs"
-                      onClick={() => void revoke(lease)}
-                    >
-                      Revoke
-                    </Button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+          <>
+            <KeyListControls<LeaseStatus>
+              options={options}
+              status={status}
+              onStatus={setStatus}
+              query={query}
+              onQuery={setQuery}
+              placeholder="Search by key or name"
+            />
+            {groups.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">No working keys match.</p>
+            ) : (
+              <div className="space-y-2" data-testid="vault-leases">
+                {groups.map((group) => (
+                  <KeyGroup
+                    key={group.key}
+                    title={group.key}
+                    live={group.rows.filter((lease) => leaseStatus(lease, now) === "live").length}
+                    total={group.rows.length}
+                  >
+                    {group.rows.map((lease) => {
+                      const state = leaseStatus(lease, now);
+                      return (
+                        <li key={lease.id} className="flex flex-wrap items-center gap-2 rounded-md px-2 py-1.5">
+                          <StatusPill tone={state === "live" ? "success" : "danger"}>{state}</StatusPill>
+                          <span className="text-sm">{lease.name}</span>
+                          <span className="num text-xs text-muted-foreground">{lease.prefix}</span>
+                          <span
+                            className="text-xs text-muted-foreground"
+                            title={new Date(lease.expiresAt).toLocaleString()}
+                          >
+                            {state === "live" ? `expires ${relativeTime(lease.expiresAt, now)}` : `ended ${relativeTime(lease.revokedAt ?? lease.expiresAt, now)}`}
+                          </span>
+                          <span
+                            className="text-xs text-muted-foreground"
+                            title={lease.lastUsedAt ? new Date(lease.lastUsedAt).toLocaleString() : undefined}
+                          >
+                            {lease.lastUsedAt ? `used ${relativeTime(lease.lastUsedAt, now)}` : "never used"}
+                          </span>
+                          {state === "live" ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="ml-auto h-7 text-xs"
+                              onClick={() => void revoke(lease)}
+                            >
+                              Revoke
+                            </Button>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </KeyGroup>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </Panel>
+  );
+}
+
+const GRANT_STATUSES = ["live", "expired", "tripped"] as const;
+const LEASE_STATUSES = ["live", "expired", "revoked"] as const;
+
+function GrantList({
+  grants,
+  gate,
+  onError,
+  onRevoked,
+}: {
+  grants: VaultGrant[];
+  gate: GateBody;
+  onError: (error: unknown) => void;
+  onRevoked: () => void;
+}) {
+  const [status, setStatus] = useState<GrantStatus | "all">("live");
+  const [query, setQuery] = useState("");
+  const now = Date.now();
+
+  async function revoke(grant: VaultGrant) {
+    const body = gate();
+    if (!body) return;
+    try {
+      await api.del(`/api/vault/grants/${grant.id}`, body);
+      toast.success("Grant revoked");
+      onRevoked();
+    } catch (error) {
+      onError(error);
+    }
+  }
+
+  const counts = countByStatus(grants, GRANT_STATUSES, (grant) => grantStatus(grant, now));
+  const options: StatusOption<GrantStatus>[] = [
+    { value: "live", label: "Live", count: counts.live },
+    { value: "expired", label: "Expired", count: counts.expired },
+    { value: "tripped", label: "Tripped", count: counts.tripped },
+    { value: "all", label: "All", count: grants.length },
+  ];
+  const needle = query.trim().toLowerCase();
+  const shown = grants.filter(
+    (grant) =>
+      (status === "all" || grantStatus(grant, now) === status) &&
+      (!needle || `${grant.name} ${grant.prefix}`.toLowerCase().includes(needle)),
+  );
+  const groups = groupRows(
+    shown,
+    (grant) => (grant.workspaceId ? "This workspace" : "Account"),
+    (grant) => grantStatus(grant, now) === "live",
+    (a, b) => Date.parse(a.expiresAt) - Date.parse(b.expiresAt),
+  );
+
+  return (
+    <div className="p-5">
+      {grants.length === 0 ? (
+        <EmptyState motif="keys" title="No grants yet" description="Mint one when you are about to hand a cabinet to an agent." />
+      ) : (
+        <>
+          <KeyListControls<GrantStatus>
+            options={options}
+            status={status}
+            onStatus={setStatus}
+            query={query}
+            onQuery={setQuery}
+            placeholder="Search by name"
+          />
+          {groups.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No temporary keys match.</p>
+          ) : (
+            <div className="space-y-2">
+              {groups.map((group) => (
+                <KeyGroup
+                  key={group.key}
+                  title={group.key}
+                  live={group.rows.filter((grant) => grantStatus(grant, now) === "live").length}
+                  total={group.rows.length}
+                >
+                  {group.rows.map((grant) => {
+                    const state = grantStatus(grant, now);
+                    return (
+                      <li key={grant.id} className="flex flex-wrap items-center gap-2 rounded-md px-2 py-1.5">
+                        <StatusPill tone={state === "live" ? "success" : state === "tripped" ? "danger" : "muted"}>
+                          {state}
+                        </StatusPill>
+                        <span className="text-sm font-medium">{grant.name}</span>
+                        <span className="num text-xs text-muted-foreground">{grant.prefix}</span>
+                        {grant.decoy ? <StatusPill tone="warning">decoy</StatusPill> : null}
+                        <span className="text-xs text-muted-foreground" title={new Date(grant.expiresAt).toLocaleString()}>
+                          {state === "expired" ? `expired ${relativeTime(grant.expiresAt, now)}` : `expires ${relativeTime(grant.expiresAt, now)}`}
+                        </span>
+                        <Button size="sm" variant="ghost" className="ml-auto h-7 text-xs" onClick={() => void revoke(grant)}>
+                          Revoke
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </KeyGroup>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

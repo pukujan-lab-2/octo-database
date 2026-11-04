@@ -23,7 +23,7 @@ export async function setConfirmSecret(
   expect(response.status()).toBe(200);
 }
 
-/** Types the one-time code the form is showing; a no-op inside the two-minute window. */
+/** Types the one-time code the form is showing; a no-op inside the fifteen-minute window. */
 export async function typeConfirmCode(page: Page, scope?: Locator): Promise<void> {
   const root = scope ?? page.locator('body');
   const shown = root.locator('[data-testid="confirm-code-value"]');

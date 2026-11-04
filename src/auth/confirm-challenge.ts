@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const TTL_MS = 10 * 60 * 1000;
 /** After a full confirmation, further gated actions pass without codes for this long. */
-export const CONFIRM_WINDOW_MS = 2 * 60 * 1000;
+export const CONFIRM_WINDOW_MS = 15 * 60 * 1000;
 
 type PendingChallenge = { code: string; expiresAt: number };
 

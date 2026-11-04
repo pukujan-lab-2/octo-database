@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
-/** Slightly shorter than the server's two minutes so the page never claims a
+/** Slightly shorter than the server's fifteen minutes so the page never claims a
  *  window the server has already closed. */
-const WINDOW_MS = 115_000;
+const WINDOW_MS = 895_000;
 
 let until = 0;
 const listeners = new Set<() => void>();

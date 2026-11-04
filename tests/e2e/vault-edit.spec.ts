@@ -99,7 +99,7 @@ test.describe('vault item edit', () => {
     const session = await createGuest(request);
     const item = await createItem(request, session.sessionToken);
 
-    // A missing code would pass here: creating the item opened the two-minute window.
+    // A missing code would pass here: creating the item opened the fifteen-minute window.
     const response = await request.patch(`/api/vault/items/${item.id}`, {
       headers: bearer(session.sessionToken),
       data: { label: 'hijacked', description: 'after', kind: 'token', notes: 'kept note', confirmSecret: 'not-the-code' },

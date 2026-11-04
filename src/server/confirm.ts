@@ -35,7 +35,7 @@ import { ServerResponse } from 'http';
  * when the request may proceed, having already written the refusal response
  * otherwise.
  *
- * Passing the full gate opens a two-minute window in which the same person's
+ * Passing the full gate opens a fifteen-minute window in which the same person's
  * further gated actions need no codes.
  */
 export async function confirmGate(

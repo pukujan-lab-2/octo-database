@@ -362,8 +362,28 @@ web server asks Octo to check it before forwarding to Phoenix. Phoenix shows eve
 workspace's project, so this is for the owner only; everyone else reads their own
 workspace through `read_traces`.
 
-Not exposed: Phoenix datasets, experiments and prompts. Phoenix keeps those for the
-whole installation rather than per project, so Octo cannot fence them per workspace.
+### Datasets and experiments
+
+Keep evaluation cases and results in the workspace's Phoenix with `arize-phoenix-client`
+pointed at `https://octo.example/api/workspaces/<id>/otel`, using a workspace key. A key
+with `read` can read; `write` can create.
+
+| To | Call |
+| --- | --- |
+| Create or append to a dataset | `POST …/otel/v1/datasets/upload` (JSON, `action` `create` or `append`) |
+| List, get, read examples and versions | `GET …/otel/v1/datasets`, `…/v1/datasets/<id>`, `…/examples`, `…/versions` |
+| Start an experiment | `POST …/otel/v1/datasets/<id>/experiments`; list with `GET` |
+| Get an experiment, its runs, export | `GET …/otel/v1/experiments/<id>`, `…/runs`, `…/json`, `…/csv` |
+| Record a run, then score it | `POST …/otel/v1/experiments/<id>/runs`, then `POST …/otel/v1/experiment_evaluations` |
+| See the workspace's project | `GET …/otel/v1/projects` |
+
+Phoenix keeps datasets, experiments and runs for the whole installation, not per
+project, so Octo fences them itself. It records what each workspace creates, and an id
+that is not yours answers `404`, the same as one that does not exist. Dataset names are
+private to the workspace: two workspaces can both have a dataset called `cases`. Upload
+takes JSON only (no CSV file), and `list` returns every dataset in one answer with no
+cursor. Delete, labels, splits, prompts, users and keys are not open, and a dataset
+made directly in Phoenix's own UI is not visible here.
 
 ## UX analytics
 

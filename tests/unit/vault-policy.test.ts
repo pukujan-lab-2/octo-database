@@ -48,6 +48,16 @@ describe('vault items', () => {
     if (parsed.ok) expect(parsed.value.workspaceId).toBe(WORKSPACE);
   });
 
+  it('accepts a WebSocket url on an item and refuses other schemes', () => {
+    const item = (url: string) =>
+      parseVaultItem(
+        { label: 'Deepgram', description: 'Speech to text for the phone agent.', kind: 'token', secret: 's', url },
+        null
+      );
+    expect(item('wss://api.deepgram.com/v1/listen').ok).toBe(true);
+    expect(item('ftp://api.deepgram.com').ok).toBe(false);
+  });
+
   it('accepts an account item when no workspace is set', () => {
     const parsed = parseVaultItem(
       { label: 'Notes', description: 'Desk drawer code for the studio.', kind: 'note', notes: 'desk code' },
@@ -151,6 +161,7 @@ describe('credential routes', () => {
 
   it('refuses a base url that is not http', () => {
     expect(parseVaultRoute({ name: 'x', baseUrl: 'api.example.com', authScheme: 'bearer' }).ok).toBe(false);
+    expect(parseVaultRoute({ name: 'x', baseUrl: 'wss://api.example.com/v1', authScheme: 'bearer' }).ok).toBe(true);
   });
 
   it('refuses an unknown scheme and a malformed route key', () => {

@@ -39,8 +39,15 @@ const GUIDE_TOPICS: Record<string, string> = {
     "UX analytics is Umami: clicks, session replays (every form field masked) and heatmaps, one website per workspace. get_ux_analytics says whether it is on. An owner or admin turns it on with enable_ux_analytics (the app's domain) and adds the returned tracking tags to the app. read_ux_analytics reads it back: resource is stats, pageviews, metrics, events, sessions, replays or active; the window defaults to the last 7 days and takes startAt and endAt in milliseconds. A person opens the Umami UI from Services in the Octo app.",
   recipes:
     "Pick the tool by the need. Store or read rows: provision_database, then query_workspace_database. Search or ask over documents: ingest_document, then query_workspace. Relationships between things: project_graph, then query_graph. Record what was believed and when: record_epistemic, query_claims_as_of, query_belief_as_of. Totals over many rows or over time: register_dataset, then query_dataset. A run failed: get_ops_summary, then retry_job. See what an agent did: read_traces; score it: record_eval_scores. See how people use an app: get_ux_analytics, enable_ux_analytics, read_ux_analytics. Files: upload_file, list_files, download_file. Each surface has a guide topic with the details.",
+  vault:
+    "Tokens are told apart by prefix: octo_live_ is an API key (cannot open the vault), octo_vault_ is a vault grant (lists items, mints working keys), octo_tmp_ is a working key. A grant mints a working key for one stored item with POST /api/vault/open/lease. A working key works only through POST/GET /api/vault/proxy, with the upstream URL in x-octo-target; it never reveals the stored secret. The target can be Octo's own API: if the stored item is an Octo workspace key, a lease on it can call .../api/workspaces/<id>/otel/read/<resource> or run SQL, so use it instead of asking for the account key.",
   keys: 'mint_key is human-stamped: it needs a session with the confirmation secret. A token can only narrow its own authority, never widen scopes or escape its workspace. The raw secret is shown exactly once.',
 };
+
+const GUIDE_TOPIC_LIST = Object.keys(GUIDE_TOPICS).join(', ');
+const SURFACE_TOPIC_LIST = Object.keys(GUIDE_TOPICS)
+  .filter((topic) => topic !== 'recipes')
+  .join(', ');
 
 /**
  * The capability action each tool needs (see OCTO_CAPABILITIES). A tool with no
@@ -121,7 +128,7 @@ export function createOctoMcpServer(api: OctoApi): McpServer {
     {
       instructions: [
         'Octo is a self-hosted workspace data platform and the data layer for the projects it serves: do not stand up a separate database for a project Octo serves.',
-        'Only the tools your key can use are listed. Call guide with a topic (recipes for which tool fits a need; workspaces, ledger, analytics, traces, ux, keys for how a surface works).',
+        `Only the tools your key can use are listed. Call guide with a topic (recipes for which tool fits a need; ${SURFACE_TOPIC_LIST} for how a surface works).`,
         "Octo's repository is read-only to adopters: propose a change as an OIO observational issue, never a pull request.",
       ].join(' '),
     }
@@ -129,8 +136,8 @@ export function createOctoMcpServer(api: OctoApi): McpServer {
 
   server.tool(
     'guide',
-    'How an Octo surface works, on demand. Topics: workspaces, ledger, analytics, keys. Call with no topic to list them.',
-    { topic: z.string().optional().describe('workspaces, ledger, analytics or keys') },
+    `How an Octo surface works, on demand. Topics: ${GUIDE_TOPIC_LIST}. Call with no topic to list them.`,
+    { topic: z.string().optional().describe(GUIDE_TOPIC_LIST) },
     async ({ topic }) => {
       const text = topic ? GUIDE_TOPICS[topic] : undefined;
       return asText(text ? { topic, guide: text } : { topics: Object.keys(GUIDE_TOPICS) });

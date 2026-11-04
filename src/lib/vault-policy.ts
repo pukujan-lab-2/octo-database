@@ -121,8 +121,8 @@ export function parseVaultItem(
   if (!username.ok) return username;
   const url = optionalText(body['url'], FIELD_MAX, 'url');
   if (!url.ok) return url;
-  if (url.value && !/^https?:\/\//i.test(url.value)) {
-    return { ok: false, error: 'URL_INVALID: url must start with http:// or https://.' };
+  if (url.value && !/^(https?|wss?):\/\//i.test(url.value)) {
+    return { ok: false, error: 'URL_INVALID: url must start with http://, https://, ws:// or wss://.' };
   }
   const secret = optionalText(body['secret'], SECRET_MAX, 'secret');
   if (!secret.ok) return secret;
@@ -231,8 +231,8 @@ export function parseVaultRoute(
 
   const baseUrl = optionalText(body['baseUrl'], FIELD_MAX, 'baseUrl');
   if (!baseUrl.ok) return baseUrl;
-  if (!baseUrl.value || !/^https?:\/\//i.test(baseUrl.value)) {
-    return { ok: false, error: 'ROUTE_INVALID: baseUrl must start with http:// or https://.' };
+  if (!baseUrl.value || !/^(https?|wss?):\/\//i.test(baseUrl.value)) {
+    return { ok: false, error: 'ROUTE_INVALID: baseUrl must start with http://, https://, ws:// or wss://.' };
   }
 
   const schemeRaw = body['authScheme'];

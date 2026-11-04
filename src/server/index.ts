@@ -26,7 +26,7 @@ import { handlePublicFilesRoutes } from '../routes/public-files';
 import { handleRagRoutes } from '../routes/rag';
 import { handleSharesRoutes } from '../routes/shares';
 import { handleVaultRoutes } from '../routes/vault';
-import { handleVaultRelayRoutes } from '../routes/vault-relay';
+import { handleVaultRelayRoutes, handleVaultRelayUpgrade } from '../routes/vault-relay';
 import { handleStaticRoutes } from '../routes/static';
 import { handleWorkspaceQueryRoutes } from '../routes/workspace-query';
 import { handleWorkspacesRoutes } from '../routes/workspaces';
@@ -132,6 +132,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 // transaction-scoped, on the fenced app pool.
 export const server = createServer((req, res) => {
   void runWithRequestIdentity(() => handleRequest(req, res));
+});
+
+// WebSocket upgrades are only relayed for the vault; anything else is refused.
+server.on('upgrade', (req, socket, head) => {
+  void runWithRequestIdentity(() => handleVaultRelayUpgrade(req, socket, head));
 });
 
 // Start listening if run directly. Compare on the basename so the guard holds on

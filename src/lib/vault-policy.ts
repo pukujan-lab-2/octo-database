@@ -25,9 +25,10 @@ export const LEASE_MAX_DAYS = 30;
 /**
  * How a vendor accepts its key. `body_json` rewrites a leaf in the request
  * body (Tavily); `path` substitutes a path segment (Telegram's bot<token>);
- * `query` sets a query parameter.
+ * `query` sets a query parameter; `token` sends `Authorization: Token <key>`
+ * (Deepgram).
  */
-export const ROUTE_AUTH_SCHEMES = ['bearer', 'x-api-key', 'basic', 'query', 'body_json', 'path'] as const;
+export const ROUTE_AUTH_SCHEMES = ['bearer', 'token', 'x-api-key', 'basic', 'query', 'body_json', 'path'] as const;
 export type RouteAuthScheme = (typeof ROUTE_AUTH_SCHEMES)[number];
 
 /** An item that cannot be checked becomes stale after this long. */
@@ -237,7 +238,7 @@ export function parseVaultRoute(
 
   const schemeRaw = body['authScheme'];
   if (typeof schemeRaw !== 'string' || !ROUTE_AUTH_SCHEMES.includes(schemeRaw as RouteAuthScheme)) {
-    return { ok: false, error: 'ROUTE_INVALID: authScheme must be bearer, x-api-key, basic, query, body_json, or path.' };
+    return { ok: false, error: 'ROUTE_INVALID: authScheme must be bearer, token, x-api-key, basic, query, body_json, or path.' };
   }
   const authScheme = schemeRaw as RouteAuthScheme;
 

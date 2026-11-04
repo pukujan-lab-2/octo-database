@@ -84,6 +84,7 @@ const app = new pg.Client({ connectionString: appUrl });
 
 async function cleanup(): Promise<void> {
   await owner.query(`DELETE FROM octo.files WHERE id = ANY($1)`, [FILES]);
+  await owner.query(`DELETE FROM octo.graph_projections WHERE workspace_id = ANY($1)`, [WORKSPACES]);
   await owner.query(`DELETE FROM octo.chunks WHERE id = ANY($1)`, [CHUNKS]);
   await owner.query(`DELETE FROM octo.document_versions WHERE id = ANY($1)`, [VERSIONS]);
   await owner.query(`DELETE FROM octo.documents WHERE id = ANY($1)`, [DOCS]);
@@ -110,6 +111,10 @@ async function seed(): Promise<void> {
     await owner.query(
       `INSERT INTO octo.workspace_memberships (workspace_id, principal_id, role) VALUES ($1, $2, 'owner')`,
       [ws, P]
+    );
+    await owner.query(
+      `INSERT INTO octo.graph_projections (workspace_id, schema_version, source_watermark) VALUES ($1, 'v1', now())`,
+      [ws]
     );
     await owner.query(
       `INSERT INTO octo.embedding_configs
@@ -198,15 +203,19 @@ async function main(): Promise<void> {
       const mine = WORKSPACES[i]!;
       const own = await scoped<{ n: string }>(mine, `SELECT count(*)::text AS n FROM octo.files WHERE workspace_id = $1`, [mine]);
       check(`scope W${i} sees its own file (positive control)`, own[0]?.n === '1');
+      const ownProjection = await scoped<{ n: string }>(mine, `SELECT count(*)::text AS n FROM octo.graph_projections WHERE workspace_id = $1`, [mine]);
+      check(`scope W${i} sees its own graph projection (positive control)`, ownProjection[0]?.n === '1');
       for (let j = 0; j < WORKSPACES.length; j++) {
         if (i === j) continue;
         const other = WORKSPACES[j]!;
         const files = await scoped<{ n: string }>(mine, `SELECT count(*)::text AS n FROM octo.files WHERE workspace_id = $1`, [other]);
         const docs = await scoped<{ n: string }>(mine, `SELECT count(*)::text AS n FROM octo.documents WHERE workspace_id = $1`, [other]);
         const chunks = await scoped<{ n: string }>(mine, `SELECT count(*)::text AS n FROM octo.chunks WHERE workspace_id = $1`, [other]);
+        const projections = await scoped<{ n: string }>(mine, `SELECT count(*)::text AS n FROM octo.graph_projections WHERE workspace_id = $1`, [other]);
         check(`scope W${i} cannot read W${j} files`, files[0]?.n === '0');
         check(`scope W${i} cannot read W${j} documents (RAG path)`, docs[0]?.n === '0');
         check(`scope W${i} cannot read W${j} chunks (RAG path)`, chunks[0]?.n === '0');
+        check(`scope W${i} cannot read W${j} graph projection`, projections[0]?.n === '0');
       }
     }
 

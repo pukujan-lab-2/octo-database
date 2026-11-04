@@ -15,7 +15,9 @@
  * because that family claims every /api/vault path and would 404 these.
  */
 
-import { Readable } from 'node:stream';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { Readable, type Duplex } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { hashApiKeySecret } from '../lib/secret-hash';
 import { decryptSecret } from '../lib/mfa';
@@ -37,6 +39,7 @@ import {
   dbGetVaultLeaseByKey,
   dbRenewVaultLease,
   dbUpdateVaultRouteHealth,
+  type ConsumedVaultLease,
   type ConsumedVaultLeaseAny,
 } from '../server/db';
 import { readJsonObject, sendJson, type RouteHandler } from '../server/http';
@@ -235,12 +238,12 @@ async function forwardUpstream(input: {
 }
 
 /**
- * The caller names the upstream. An absolute http(s) URL is used as-is; a
+ * The caller names the upstream. An absolute http(s) or ws(s) URL is used as-is; a
  * relative path resolves against the lease's default upstream.
  */
 function resolveTarget(raw: string | null, defaultTarget: string | null): string | null {
   if (!raw) return defaultTarget;
-  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^(https?|wss?):\/\//i.test(raw)) return raw;
   if (!defaultTarget) return null;
   return defaultTarget.replace(/\/+$/, '') + (raw.startsWith('/') ? raw : `/${raw}`);
 }
@@ -396,3 +399,156 @@ export const handleVaultRelayRoutes: RouteHandler = async (req, res, url) => {
   const routeKey = match[1]!;
   return relay(req, res, url, routeKey);
 };
+
+/**
+ * WebSocket egress. Octo only handles the opening handshake: it checks the
+ * working key, injects the stored secret into the upgrade request, and, once the
+ * vendor answers 101, pipes the two sockets together. Frames, pings and closes
+ * pass through untouched, so no WebSocket library is involved.
+ *
+ * The secret is scrubbed from the vendor's handshake headers (or from a refusal
+ * body); message frames are not inspected.
+ */
+const STATUS_TEXT: Record<number, string> = { 400: 'Bad Request', 401: 'Unauthorized', 404: 'Not Found', 502: 'Bad Gateway' };
+
+function refuseUpgrade(socket: Duplex, status: number, message: string): void {
+  const body = JSON.stringify({ error: message });
+  socket.end(
+    `HTTP/1.1 ${status} ${STATUS_TEXT[status] ?? 'Error'}\r\nContent-Type: application/json\r\n` +
+      `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`
+  );
+}
+
+function writeHandshakeHead(
+  socket: Duplex,
+  statusLine: string,
+  rawHeaders: string[],
+  forms: string[],
+  keep: (name: string) => boolean,
+  extra = ''
+): void {
+  let head = `${statusLine}\r\n${extra}`;
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const name = rawHeaders[i]!;
+    if (keep(name.toLowerCase())) head += `${name}: ${scrubSecrets(rawHeaders[i + 1]!, forms)}\r\n`;
+  }
+  socket.write(`${head}\r\n`);
+}
+
+const BODY_FRAMING_HEADERS = new Set(['transfer-encoding', 'connection', 'keep-alive', 'content-encoding', 'content-length']);
+
+export async function handleVaultRelayUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
+  socket.on('error', () => socket.destroy());
+  let url: URL;
+  try {
+    url = new URL(req.url ?? '/', 'http://localhost');
+  } catch {
+    return refuseUpgrade(socket, 400, 'BAD_REQUEST: malformed request target');
+  }
+  const path = url.pathname;
+  const isProxy = path === '/api/vault/proxy' || path.startsWith('/api/vault/proxy/');
+  const relayMatch = path.match(/^\/api\/vault\/relay\/([a-z0-9][a-z0-9-]*)(\/.*)?$/);
+  if (!isProxy && !relayMatch) return refuseUpgrade(socket, 404, `Not found: ${req.method} ${path}`);
+
+  const { key, ambiguous } = extractTempKey(req, url);
+  if (ambiguous) return refuseUpgrade(socket, 400, 'WORKING_KEY_AMBIGUOUS: send exactly one working key.');
+  if (!key) return refuseUpgrade(socket, 401, 'WORKING_KEY_MISSING: attach the working key.');
+
+  try {
+    const keyHash = hashApiKeySecret(key);
+    const routeLease: ConsumedVaultLease | null = relayMatch ? await dbConsumeVaultLease(keyHash, relayMatch[1]!) : null;
+    const lease: ConsumedVaultLeaseAny | null = relayMatch ? routeLease : await dbConsumeVaultLeaseByKey(keyHash);
+    if (!lease || !lease.secretEncrypted) {
+      return refuseUpgrade(socket, 401, 'WORKING_KEY_INVALID: that key is unknown, expired, revoked, or not valid here.');
+    }
+    if (lease.authScheme === 'body_json') {
+      return refuseUpgrade(socket, 400, 'WEBSOCKET_UNSUPPORTED: a body_json lease has no body to rewrite.');
+    }
+    const secret = decryptSecret(lease.secretEncrypted);
+
+    let built: BuiltUpstreamRequest | { error: string; status: number };
+    if (relayMatch) {
+      built = buildUpstreamRequest({
+        route: { ...lease, baseUrl: lease.baseUrl ?? '' },
+        secret,
+        tempKey: key,
+        method: 'GET',
+        url,
+        headers: req.headers,
+        body: null,
+      });
+    } else {
+      const target = resolveTarget(proxyTarget(req, url), lease.baseUrl);
+      if (!target) {
+        return refuseUpgrade(socket, 400, 'TARGET_REQUIRED: name the vendor URL in x-octo-target, ?target=, or the path.');
+      }
+      built = buildProxyRequest({
+        // ws(s):// names the same host as http(s)://; the upgrade headers carry the rest.
+        targetUrl: target.replace(/^ws(s?):\/\//i, 'http$1://'),
+        route: { ...lease, baseUrl: lease.baseUrl ?? target },
+        secret,
+        tempKey: key,
+        headers: req.headers,
+        body: null,
+      });
+    }
+    if ('error' in built) {
+      return refuseUpgrade(socket, built.status, `${built.error}: the route could not build an upstream request.`);
+    }
+
+    const forms = built.secretForms;
+    const health = (status: number | 'error', detail?: string) => {
+      if (!routeLease) return;
+      const c = classifyUpstream(status);
+      void dbUpdateVaultRouteHealth(routeLease.principalId, routeLease.routeId, c.status, detail ?? c.detail).catch(
+        () => undefined
+      );
+    };
+
+    const target = new URL(built.url);
+    const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
+    const upstream = send(target, {
+      method: 'GET',
+      headers: { ...built.headers, Connection: 'Upgrade', Upgrade: 'websocket' },
+    });
+
+    upstream.on('upgrade', (upRes, upSocket, upHead) => {
+      health(upRes.statusCode ?? 101);
+      writeHandshakeHead(socket, `HTTP/1.1 ${upRes.statusCode} ${upRes.statusMessage}`, upRes.rawHeaders, forms, () => true);
+      if (upHead.length) socket.write(upHead);
+      if (head.length) upSocket.write(head);
+      socket.pipe(upSocket);
+      upSocket.pipe(socket);
+      const close = () => {
+        socket.destroy();
+        upSocket.destroy();
+      };
+      socket.on('close', close);
+      upSocket.on('close', close);
+      upSocket.on('error', close);
+    });
+
+    // The vendor refused the upgrade (401, 403, a plain page): hand that answer back.
+    upstream.on('response', (upRes) => {
+      health(upRes.statusCode ?? 502);
+      writeHandshakeHead(
+        socket,
+        `HTTP/1.1 ${upRes.statusCode} ${upRes.statusMessage}`,
+        upRes.rawHeaders,
+        forms,
+        (name) => !BODY_FRAMING_HEADERS.has(name),
+        'Connection: close\r\n'
+      );
+      pipeline(upRes, createSecretScrubber(forms), socket).catch(() => socket.destroy());
+    });
+
+    upstream.on('error', (error) => {
+      health('error', scrubSecrets(redactTempKeys(error.message), forms));
+      refuseUpgrade(socket, 502, 'EGRESS_FAILED: the vendor did not answer.');
+    });
+    socket.on('close', () => upstream.destroy());
+    upstream.end();
+  } catch {
+    refuseUpgrade(socket, 502, 'EGRESS_FAILED: the upgrade could not be relayed.');
+  }
+}

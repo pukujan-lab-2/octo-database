@@ -55,6 +55,11 @@ describe('extractTempKey', () => {
     expect(found).toEqual({ key: KEY, ambiguous: false });
   });
 
+  it('finds a working key sent the Deepgram way, as Token', () => {
+    const found = extractTempKey(request({ authorization: `Token ${KEY}` }), new URL('https://octo.test/x'));
+    expect(found).toEqual({ key: KEY, ambiguous: false });
+  });
+
   it('finds an x-api-key working key', () => {
     const found = extractTempKey(request({ 'x-api-key': KEY }), new URL('https://octo.test/x'));
     expect(found.key).toBe(KEY);
@@ -102,6 +107,13 @@ describe('buildUpstreamRequest', () => {
     expect(built.url).toBe('https://api.vendor.test/v1/things?limit=5');
     expect(built.headers['Authorization']).toBe('Bearer real-secret');
     expect(built.headers['x-api-key']).toBeUndefined();
+    expect(JSON.stringify(built.headers)).not.toContain(KEY);
+  });
+
+  it('injects a Token secret for the token scheme', () => {
+    const built = build({ route: { authScheme: 'token' }, headers: { authorization: `Token ${KEY}` } });
+    if ('error' in built) throw new Error(built.error);
+    expect(built.headers['Authorization']).toBe('Token real-secret');
     expect(JSON.stringify(built.headers)).not.toContain(KEY);
   });
 

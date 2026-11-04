@@ -152,6 +152,7 @@ curl -s ${BASE}/api/vault/lease/info -H "Authorization: Bearer octo_tmp_…"`}
         ]}
         rows={[
           ["bearer", "Authorization: Bearer octo_tmp_…"],
+          ["token", "Authorization: Token octo_tmp_… (Deepgram)"],
           ["x-api-key", "the configured header, e.g. x-api-key: octo_tmp_…"],
           ["basic", "Authorization: Basic base64(user:octo_tmp_…)"],
           ["query", "the configured query parameter"],

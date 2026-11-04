@@ -92,6 +92,19 @@ Authorization: Bearer octo_live_ws_...
           caption: "`similarity` is null for a chunk only the lexical arm found; `lexicalScore` is null for a vector-only match.",
         }}
       />
+      <H3 id="filters">Filters and reranking</H3>
+      <P>
+        A query can narrow the search before its limit applies:{" "}
+        <C>{`"filter": { "documentIds": [...], "titlePrefix": "Incident", "latestVersionOnly": true }`}</C>.
+        Up to 2,000 matching chunks are searched exactly. A wider filter walks the vector and
+        keyword indexes in rank order, so a search over a large site stays fast.
+      </P>
+      <P>
+        Where a reranker is configured, results are reranked by default over twice the limit;
+        pass <C>"rerank": false</C> to skip it. An explicit <C>"rerank": true</C> with no
+        reranker answers <C>503 RERANK_NOT_CONFIGURED</C>. Embeddings are stored as 512-dimension
+        half-precision vectors.
+      </P>
       <Callout tone="warning" title="Embeddings must be configured">
         Ingest and query both need an embedding provider. Without one they answer{" "}
         <C>503 EMBEDDING_PROVIDER_NOT_CONFIGURED</C> and name the two environment variables the

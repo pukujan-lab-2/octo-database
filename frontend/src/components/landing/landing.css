@@ -1,0 +1,128 @@
+/* The public homepage and feature pages. Self-contained: it carries its own
+   warm light palette so it does not follow the dashboard's design system. */
+
+.lp {
+  --lp-bg: #f6f3ec;
+  --lp-card: #fffdf8;
+  --lp-ink: #1c1b17;
+  --lp-muted: #6a665b;
+  --lp-line: #e3ded2;
+  --lp-accent: #2f5d3a;
+  --lp-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  background: var(--lp-bg);
+  color: var(--lp-ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Shared components (the sign-in card) read the dashboard's tokens, so the
+   homepage pins them to its own light palette whatever theme the portal uses. */
+.lp {
+  --background: 43 32% 94%;
+  --foreground: 50 12% 10%;
+  --card: 45 60% 98%;
+  --card-foreground: 50 12% 10%;
+  --popover: 45 60% 98%;
+  --popover-foreground: 50 12% 10%;
+  --primary: 50 12% 10%;
+  --primary-foreground: 43 32% 94%;
+  --secondary: 43 22% 90%;
+  --secondary-foreground: 50 12% 10%;
+  --muted: 43 22% 91%;
+  --muted-foreground: 48 8% 38%;
+  --accent: 43 22% 88%;
+  --accent-foreground: 50 12% 10%;
+  --destructive: 0 68% 38%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 42 20% 84%;
+  --input: 42 20% 80%;
+  --ring: 137 33% 28%;
+  --success: 154 62% 26%;
+  --warning: 32 88% 36%;
+  --info: 199 82% 34%;
+  color-scheme: light;
+}
+
+.lp .lp-serif {
+  font-family: var(--lp-serif);
+  letter-spacing: -0.02em;
+  font-weight: 500;
+}
+
+.lp .lp-muted {
+  color: var(--lp-muted);
+}
+
+/* A layer drifts by --p (set from scroll) times its own --speed, in pixels. */
+.lp .lp-layer {
+  transform: translate3d(0, calc(var(--p, 0) * var(--speed, 0) * 1px), 0);
+  will-change: transform;
+}
+
+.lp .lp-stage {
+  --tint: hsl(var(--hue, 200) 55% 90%);
+  --tint-deep: hsl(var(--hue, 200) 45% 80%);
+  background: linear-gradient(160deg, var(--tint), var(--tint-deep));
+  border-radius: 2rem;
+  position: relative;
+  overflow: hidden;
+  min-height: 24rem;
+}
+
+.lp .lp-blob {
+  position: absolute;
+  border-radius: 9999px;
+  background: hsl(var(--hue, 200) 60% 96% / 0.7);
+}
+
+.lp .lp-card {
+  background: var(--lp-card);
+  border: 1px solid var(--lp-line);
+  border-radius: 1.25rem;
+  box-shadow: 0 1px 0 rgb(0 0 0 / 0.02), 0 18px 40px -22px rgb(40 30 10 / 0.35);
+}
+
+.lp .lp-code {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.lp .lp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.8rem 1.4rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+.lp .lp-btn-dark {
+  background: var(--lp-ink);
+  color: var(--lp-bg);
+}
+.lp .lp-btn-dark:hover {
+  background: #3a382f;
+}
+.lp .lp-btn-line {
+  border: 1px solid var(--lp-line);
+  background: var(--lp-card);
+}
+.lp .lp-btn-line:hover {
+  border-color: var(--lp-ink);
+}
+
+.lp a:focus-visible,
+.lp button:focus-visible {
+  outline: 2px solid var(--lp-accent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp .lp-layer {
+    transform: none;
+    will-change: auto;
+  }
+}

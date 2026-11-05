@@ -47,6 +47,11 @@ function ownerAgentKeyIds(): Set<string> {
   );
 }
 
+/** True for an OAuth access token from Octo's own authorization server. */
+export function isOAuthToken(auth: AuthContext): boolean {
+  return Boolean(auth.apiKey?.keyId.startsWith('oauth:'));
+}
+
 export function keyWorkspaceMatches(auth: AuthContext, workspaceId: string): boolean {
   return !auth.apiKey?.workspaceId || auth.apiKey.workspaceId === workspaceId;
 }

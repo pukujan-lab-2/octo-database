@@ -74,6 +74,29 @@ Blocked/uncertain:
 Next:
 - Wait for gates on PR #83 to pass and auto-merge; then voice-agent-research#131 builds on the API
 
+### 2026-11-05 00:33:32 UTC — agent:claude-code/8c489413-ecde-4c9a-82c4-1a8b8ec43c16
+
+<!-- continuity:checkpoint {"agent":"agent:claude-code/8c489413-ecde-4c9a-82c4-1a8b8ec43c16","blocked":[],"changed":["src/routes/members.ts, src/server/confirm.ts, src/server/auth-context.ts, tests/e2e/workspace-members.spec.ts, tests/e2e/route-table.ts, docs/ARCHITECTURE.md"],"completed":["Promoted members to production (PR 85, live image ba05387, GET members answers 200); OAuth admin tokens pass the member routes' gate with a per-workspace one-time code plus TOTP"],"decisions":["no new decisions"],"evidence":["Local: workspace-members, route-isolation, oauth-mcp, confirm-code specs 491 passed; vitest 883 passed; Python 138 passed; typecheck and lint:imports clean"],"next_action":"Merge the OAuth member-confirm PR when gates passes, then promote it to production","protocol_version":"0.1.0-draft","schema":"project-continuity.checkpoint.v1","task_id":"OCTO-1002","timestamp":"2026-11-05T00:33:32Z"} -->
+<!-- continuity:checkpoint-operation {"payload_sha256":"5375205b383914e8c2e3067c0122e2209ff6658856aa71730a66bd4571ad6fcc","request_id":"4982ad71a3904b2f97a4fdce228b5937","schema":"project-continuity.checkpoint-operation.v1","task_id":"OCTO-1002"} -->
+
+Completed:
+- Promoted members to production (PR 85, live image ba05387, GET members answers 200); OAuth admin tokens pass the member routes' gate with a per-workspace one-time code plus TOTP
+
+Evidence:
+- Local: workspace-members, route-isolation, oauth-mcp, confirm-code specs 491 passed; vitest 883 passed; Python 138 passed; typecheck and lint:imports clean
+
+Decisions:
+- no new decisions
+
+Changed:
+- src/routes/members.ts, src/server/confirm.ts, src/server/auth-context.ts, tests/e2e/workspace-members.spec.ts, tests/e2e/route-table.ts, docs/ARCHITECTURE.md
+
+Blocked/uncertain:
+- none
+
+Next:
+- Merge the OAuth member-confirm PR when gates passes, then promote it to production
+
 ## Handoff
 
 Read PROJECT → CURRENT → this task → minimum relevant spec. Checkpoint before stopping.

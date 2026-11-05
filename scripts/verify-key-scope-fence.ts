@@ -17,6 +17,12 @@
  * fence is proven on more than the endpoint a public test would name, and asserts
  * the identity GUC cannot leak past its transaction on a pooled connection.
  *
+ * Issue #10 adds the case a forgotten WHERE clause would hit: over every octo table
+ * with a workspace_id column, an unfiltered SELECT returns only the caller's own
+ * workspace for a scoped key, and nothing at all for a principal who belongs to no
+ * workspace. The analytics catalog, which used to be reachable only through the
+ * BYPASSRLS pool, is seeded and checked the same way.
+ *
  * Env:
  *   DATABASE_URL     schema-owner connection (seed + role assertions + cleanup)
  *   OCTO_DB_URL      octo_app connection (the fenced role under test)
@@ -69,6 +75,9 @@ const FILES = [
   '44444444-dddd-dddd-dddd-dddddddddddd',
 ];
 
+// A second principal who is a member of no seeded workspace.
+const OUTSIDER = '12121212-1212-1212-1212-121212121212';
+
 const failures: string[] = [];
 function check(name: string, ok: boolean, detail = ''): void {
   if (ok) {
@@ -83,6 +92,12 @@ const owner = new pg.Client({ connectionString: ownerUrl });
 const app = new pg.Client({ connectionString: appUrl });
 
 async function cleanup(): Promise<void> {
+  await owner.query(`DELETE FROM octo.analytics_results WHERE workspace_id = ANY($1)`, [WORKSPACES]);
+  await owner.query(`DELETE FROM octo.analytics_schedules WHERE workspace_id = ANY($1)`, [WORKSPACES]);
+  await owner.query(`DELETE FROM octo.analytics_specs WHERE workspace_id = ANY($1)`, [WORKSPACES]);
+  await owner.query(`DELETE FROM octo.dataset_versions WHERE workspace_id = ANY($1)`, [WORKSPACES]);
+  await owner.query(`DELETE FROM octo.datasets WHERE workspace_id = ANY($1)`, [WORKSPACES]);
+  await owner.query(`DELETE FROM octo.jobs WHERE workspace_id = ANY($1)`, [WORKSPACES]);
   await owner.query(`DELETE FROM octo.files WHERE id = ANY($1)`, [FILES]);
   await owner.query(`DELETE FROM octo.graph_projections WHERE workspace_id = ANY($1)`, [WORKSPACES]);
   await owner.query(`DELETE FROM octo.phoenix_resources WHERE workspace_id = ANY($1)`, [WORKSPACES]);
@@ -92,7 +107,7 @@ async function cleanup(): Promise<void> {
   await owner.query(`DELETE FROM octo.embedding_configs WHERE id = ANY($1)`, [CONFIGS]);
   await owner.query(`DELETE FROM octo.workspace_memberships WHERE principal_id = $1`, [P]);
   await owner.query(`DELETE FROM octo.workspaces WHERE id = ANY($1)`, [WORKSPACES]);
-  await owner.query(`DELETE FROM octo.principals WHERE id = $1`, [P]);
+  await owner.query(`DELETE FROM octo.principals WHERE id = ANY($1)`, [[P, OUTSIDER]]);
 }
 
 async function seed(): Promise<void> {
@@ -100,6 +115,11 @@ async function seed(): Promise<void> {
     `INSERT INTO octo.principals (id, auth_user_id, email, display_name, is_guest, is_platform_owner)
      VALUES ($1, 'aaaaaaaa-0000-0000-0000-000000000001', 'fence@x', 'Fence', false, false)`,
     [P]
+  );
+  await owner.query(
+    `INSERT INTO octo.principals (id, auth_user_id, email, display_name, is_guest, is_platform_owner)
+     VALUES ($1, 'aaaaaaaa-0000-0000-0000-000000000002', 'outsider@x', 'Outsider', false, false)`,
+    [OUTSIDER]
   );
   for (let i = 0; i < WORKSPACES.length; i++) {
     const ws = WORKSPACES[i]!;
@@ -151,18 +171,52 @@ async function seed(): Promise<void> {
        VALUES ($1, $2, $3, $4, 'text/plain', 1, 'r2', $5, 'active')`,
       [FILES[i]!, ws, P, `fence-${i}.txt`, `fence/${i}`]
     );
+    // The analytics catalog: a dataset, its version, a spec, a schedule, and a
+    // finished query job with its result.
+    const dataset = await owner.query<{ id: string }>(
+      `INSERT INTO octo.datasets (workspace_id, slug, name, created_by) VALUES ($1, 'fence', 'Fence', $2) RETURNING id`,
+      [ws, P]
+    );
+    const version = await owner.query<{ id: string }>(
+      `INSERT INTO octo.dataset_versions (workspace_id, dataset_id, version, schema, row_count, object_keys, created_by)
+       VALUES ($1, $2, 1, '[]', 1, ARRAY['fence.parquet'], $3) RETURNING id`,
+      [ws, dataset.rows[0]!.id, P]
+    );
+    await owner.query(
+      `INSERT INTO octo.analytics_specs (workspace_id, slug, version, sql, created_by) VALUES ($1, 'fence', 1, 'SELECT 1', $2)`,
+      [ws, P]
+    );
+    await owner.query(
+      `INSERT INTO octo.analytics_schedules (workspace_id, spec, dataset, every_minutes, sink, created_by)
+       VALUES ($1, 'ws:fence@1', 'fence', 60, '{}', $2)`,
+      [ws, P]
+    );
+    const job = await owner.query<{ id: string }>(
+      `INSERT INTO octo.jobs (workspace_id, job_type, state, idempotency_key, created_by)
+       VALUES ($1, 'analytics_query', 'completed', $2, $3) RETURNING id`,
+      [ws, `fence-${i}`, P]
+    );
+    await owner.query(
+      `INSERT INTO octo.analytics_results
+         (workspace_id, dataset_version_id, job_id, query_spec, object_key, row_count, content_hash, engine_version)
+       VALUES ($1, $2, $3, 'ws:fence@1', 'fence/result', 1, 'h', 'duckdb')`,
+      [ws, version.rows[0]!.id, job.rows[0]!.id]
+    );
   }
 }
+
+const ANALYTICS_TABLES = ['datasets', 'dataset_versions', 'analytics_specs', 'analytics_schedules', 'analytics_results'];
 
 /** Runs `sql` as octo_app with a workspace scope bound, transaction-locally. */
 async function scoped<T extends pg.QueryResultRow>(
   workspaceId: string,
   sql: string,
-  params: unknown[] = []
+  params: unknown[] = [],
+  principalId = P
 ): Promise<T[]> {
   await app.query('BEGIN');
   try {
-    await app.query(`SELECT set_config('octo.principal_id', $1, true)`, [P]);
+    await app.query(`SELECT set_config('octo.principal_id', $1, true)`, [principalId]);
     await app.query(`SELECT set_config('request.workspace_id', $1, true)`, [workspaceId]);
     const res = await app.query<T>(sql, params);
     await app.query('COMMIT');
@@ -253,6 +307,90 @@ async function main(): Promise<void> {
     if (denied) {
       check('refusal is a row-level-security denial', /row-level security|tenant_scope_fence|42501/i.test(deniedDetail), deniedDetail);
     }
+
+    // 4b. The analytics catalog is fenced like the rest: scoped to W_i, each table
+    // shows its own row and none of W_j's.
+    console.log('analytics catalog: own rows visible, other workspaces not');
+    for (let i = 0; i < WORKSPACES.length; i++) {
+      const mine = WORKSPACES[i]!;
+      for (const table of ANALYTICS_TABLES) {
+        const own = await scoped<{ n: string }>(mine, `SELECT count(*)::text AS n FROM octo.${table} WHERE workspace_id = $1`, [mine]);
+        check(`scope W${i} sees its own ${table} row (positive control)`, own[0]?.n === '1');
+        const others = await scoped<{ n: string }>(mine, `SELECT count(*)::text AS n FROM octo.${table} WHERE workspace_id = ANY($1)`, [
+          WORKSPACES.filter((w) => w !== mine),
+        ]);
+        check(`scope W${i} cannot read other workspaces' ${table}`, others[0]?.n === '0');
+      }
+    }
+
+    // 4c. A query that forgets its workspace filter. Over every table with a
+    // workspace_id column, an unfiltered SELECT returns only the caller's workspace
+    // for a scoped key, and nothing at all for a principal in no workspace (an
+    // unscoped session, so only membership policies stand in the way).
+    console.log('unfiltered reads on every tenant table');
+    const tenantTables = (
+      await owner.query<{ table_name: string }>(
+        `SELECT c.table_name FROM information_schema.columns c
+         JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+         WHERE c.table_schema = 'octo' AND c.column_name = 'workspace_id' AND t.table_type = 'BASE TABLE'
+         ORDER BY 1`
+      )
+    ).rows.map((r) => r.table_name);
+    check('found the tenant tables', tenantTables.length > 20, String(tenantTables.length));
+    for (const table of tenantTables) {
+      for (let i = 0; i < WORKSPACES.length; i++) {
+        const seen = await scoped<{ w: string }>(WORKSPACES[i]!, `SELECT DISTINCT workspace_id::text AS w FROM octo.${table}`);
+        const leaked = seen.map((r) => r.w).filter((w) => w !== WORKSPACES[i]);
+        check(`scope W${i}, unfiltered ${table}: only its own workspace`, leaked.length === 0, leaked.join(','));
+      }
+      const outsider = await scoped<{ n: string }>('', `SELECT count(*)::text AS n FROM octo.${table}`, [], OUTSIDER);
+      check(`non-member, unfiltered ${table}: no rows`, outsider[0]?.n === '0', outsider[0]?.n);
+    }
+
+    // 4d. Writes by a principal in no workspace. INSERT is refused; UPDATE and
+    // DELETE match no rows, and the rows are still there afterwards.
+    console.log('non-member writes are denied');
+    const refused = async (sql: string, params: unknown[]): Promise<boolean> => {
+      try {
+        await scoped('', sql, params, OUTSIDER);
+        return false;
+      } catch (err) {
+        return /row-level security|42501/i.test(err instanceof Error ? err.message : String(err));
+      }
+    };
+    check(
+      'non-member cannot INSERT a file into W0',
+      await refused(
+        `INSERT INTO octo.files (id, workspace_id, created_by, name, mime_type, size_bytes, provider, storage_key, status)
+         VALUES (gen_random_uuid(), $1, $2, 'in.txt', 'text/plain', 1, 'r2', 'in', 'active')`,
+        [WORKSPACES[0]!, OUTSIDER]
+      )
+    );
+    check(
+      'non-member cannot INSERT a dataset into W0',
+      await refused(`INSERT INTO octo.datasets (workspace_id, slug, name) VALUES ($1, 'in', 'In')`, [WORKSPACES[0]!])
+    );
+    check(
+      'scope W0 cannot INSERT a dataset into W1',
+      await (async () => {
+        try {
+          await scoped(WORKSPACES[0]!, `INSERT INTO octo.datasets (workspace_id, slug, name) VALUES ($1, 'in', 'In')`, [WORKSPACES[1]!]);
+          return false;
+        } catch (err) {
+          return /row-level security|42501/i.test(err instanceof Error ? err.message : String(err));
+        }
+      })()
+    );
+    await scoped('', `UPDATE octo.files SET name = 'hijacked' WHERE workspace_id = $1`, [WORKSPACES[0]!], OUTSIDER);
+    await scoped('', `DELETE FROM octo.analytics_schedules WHERE workspace_id = $1`, [WORKSPACES[0]!], OUTSIDER);
+    await scoped('', `DELETE FROM octo.documents`, [], OUTSIDER);
+    const untouched = await owner.query<{ files: string; schedules: string; docs: string }>(
+      `SELECT (SELECT count(*) FROM octo.files WHERE workspace_id = $1 AND name <> 'hijacked')::text AS files,
+              (SELECT count(*) FROM octo.analytics_schedules WHERE workspace_id = $1)::text AS schedules,
+              (SELECT count(*) FROM octo.documents WHERE workspace_id = ANY($2))::text AS docs`,
+      [WORKSPACES[0]!, WORKSPACES]
+    );
+    check('non-member UPDATE and DELETE changed nothing', JSON.stringify(untouched.rows[0]) === JSON.stringify({ files: '1', schedules: '1', docs: '3' }), JSON.stringify(untouched.rows[0]));
 
     // 5. GUC leak-safety: a transaction-scoped binding must not survive on the
     // pooled client for the next caller.

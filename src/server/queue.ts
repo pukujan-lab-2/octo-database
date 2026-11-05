@@ -59,9 +59,9 @@ export async function drainQueueOnce(targetWorkspaceId?: string, maxJobs = 10): 
       analytics: objectStore
         ? {
             loadVersion: (workspaceId, datasetVersionId) =>
-              dbGetDatasetVersion(workspaceId, datasetVersionId),
+              dbGetDatasetVersion(workspaceId, datasetVersionId, queryService),
             loadWorkspaceSpec: (workspaceId, slug, version) =>
-              dbGetWorkspaceSpec(workspaceId, slug, version),
+              dbGetWorkspaceSpec(workspaceId, slug, version, queryService),
             writeSink: writeAnalyticsSink,
             registerResult: async (input) => {
               await dbRegisterAnalyticsResult(input);
@@ -179,7 +179,7 @@ export async function runRetentionSweep(): Promise<number> {
 export async function runAnalyticsSchedules(): Promise<number> {
   let enqueued = 0;
   for (const schedule of await dbListDueAnalyticsSchedules()) {
-    const latest = await dbGetLatestDatasetVersion(schedule.workspaceId, schedule.dataset);
+    const latest = await dbGetLatestDatasetVersion(schedule.workspaceId, schedule.dataset, queryService);
     if (!latest || latest.id === schedule.lastDatasetVersionId) {
       await dbMarkAnalyticsScheduleRan(schedule.id, schedule.everyMinutes, null);
       continue;

@@ -121,6 +121,7 @@ export const ROUTE_TABLE: RouteSpec[] = [
   { method: 'GET', path: '/api/workspaces/:ws/members', tenancy: 'workspace', scope: 'read', ws: 'path', source: 'src/routes/members.ts' },
   { method: 'POST', path: '/api/workspaces/:ws/members', tenancy: 'workspace', scope: 'write', ws: 'path', body: { email: 'probe@example.com' }, confirm: true, source: 'src/routes/members.ts' },
   { method: 'DELETE', path: '/api/workspaces/:ws/members', tenancy: 'workspace', scope: 'delete', ws: 'path', body: { email: 'probe@example.com' }, confirm: true, source: 'src/routes/members.ts' },
+  { method: 'POST', path: '/api/workspaces/:ws/members/confirm-challenge', tenancy: 'workspace', scope: 'write', ws: 'path', source: 'src/routes/members.ts' },
   { method: 'POST', path: '/api/workspaces/:ws/database', tenancy: 'workspace', scope: 'write', ws: 'path', hiddenFromNonMembers: true, source: 'src/routes/workspaces.ts' },
   { method: 'POST', path: '/api/workspaces/:ws/query', tenancy: 'workspace', scope: 'read', ws: 'path', body: { sql: 'select 1' }, source: 'src/routes/workspace-query.ts' },
 

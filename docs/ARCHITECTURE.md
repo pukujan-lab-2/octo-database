@@ -26,7 +26,7 @@ The compose file is `deploy/gravebuster/docker-compose.yml`; the VPS adds `docke
 |---|---|---|
 | `octo_sess_…` | A person in the browser, after Google or guest sign-in | 20 minutes, signed with `OCTO_SESSION_SECRET`, no server state |
 | `octo_live_acc_…` / `octo_live_ws_…` | An app or agent: an API key, account-wide or pinned to one workspace | Until revoked, or `expiresInDays` |
-| `eyJ…` | An MCP client after OAuth 2.1 (PKCE, dynamic registration) | 1 hour access, 30 day refresh; bound to one workspace |
+| `eyJ…` | An MCP client or a web app after OAuth 2.1 (PKCE, dynamic registration) | 1 hour access, 30 day refresh; bound to one workspace |
 
 Each route calls `authenticateRequest` itself; there is no global middleware. Some routes accept other credentials: signed media URLs for file bytes, share tokens for public shares, and vault grant and lease tokens (below).
 
@@ -45,9 +45,19 @@ A person's own session is never limited by scopes. A workspace key works only on
 
 **Owner agent keys.** Account-wide keys listed in `OCTO_OWNER_AGENT_KEYS` act as the owner's own session. They skip scope checks and the confirm gate, and they can read vault secrets. They exist so the owner's agents can work without a person present.
 
-**Roles** in a workspace, from most to least: `owner`, `admin`, `operator`, `member` (`src/types/auth.ts`). `member` reads. `operator` uploads, publishes, ingests and runs jobs. `admin` deletes, manages shares and enables UX analytics. Only `owner` deletes the workspace. The platform owner passes every membership check. Memberships are only ever created as `owner` today; there is no invite route.
+**Roles** in a workspace, from most to least: `owner`, `admin`, `operator`, `member` (`src/types/auth.ts`). `member` reads. `operator` uploads, publishes, ingests and runs jobs. `admin` deletes, manages shares and enables UX analytics. Only `owner` deletes the workspace. The platform owner passes every membership check.
 
-**The confirm gate** (`src/server/confirm.ts`) stands in front of risky changes: creating or deleting a workspace, minting or re-scoping a key, and every vault change. The person asks for a 6-character code (`POST /api/me/confirm-challenge`, valid 10 minutes, single use), plus a TOTP code if they enrolled MFA. After a full pass, further changes within **fifteen minutes** need no code. API keys can never confirm; owner agent keys always pass. Codes and the fifteen-minute window live in process memory.
+**Members** (`src/routes/members.ts`, #82). The workspace's owner or an admin adds, lists and removes members by the email they sign in with:
+
+- `GET /api/workspaces/:id/members` returns `{ members: [{ principalId, email, displayName, role, createdAt }], pending: [{ email, role, invitedBy, createdAt }] }`.
+- `POST /api/workspaces/:id/members` with `{ email, role? }` (`admin`, `operator` or `member`, default `member`) answers `201 { status: "added", member }`, `200 { status: "updated", member }` when the person was already a member, or `202 { status: "pending", pending }` when nobody has signed in with that email yet. A pending addition becomes a membership at that person's first Google sign-in, if Google reports the email verified (`octo.workspace_invites`, claimed in `src/routes/auth.ts`).
+- `DELETE /api/workspaces/:id/members` with `{ email }` answers `200 { removed, email, membershipRemoved, inviteRemoved, keysRevoked }`, or `404 MEMBER_NOT_FOUND`.
+
+Nobody becomes `owner` this way, the owner cannot be changed or removed, and a caller cannot grant a role above their own or touch a member ranked above them. Adding and removing are confirm-gated (`confirmSecret`, `mfaCode` in the body). Each change goes to the workspace's activity log as `member.added`, `member.updated`, `member.invited` or `member.removed`. Removal takes effect on the member's next request, because every route reads membership live; it also deletes the workspace keys they minted there and revokes their OAuth refresh tokens for it.
+
+**The confirm gate** (`src/server/confirm.ts`) stands in front of risky changes: creating or deleting a workspace, adding or removing a member, minting or re-scoping a key, and every vault change. The person asks for a 6-character code (`POST /api/me/confirm-challenge`, valid 10 minutes, single use), plus a TOTP code if they enrolled MFA. After a full pass, further changes within **fifteen minutes** need no code. API keys can never confirm; owner agent keys always pass. Codes and the fifteen-minute window live in process memory.
+
+**Signing people in from a web app.** Octo's OAuth server (`src/server/oauth.ts`) is not only for MCP clients. A web app registers with `POST /oauth/register` (its own `redirect_uris`), sends the person to `/oauth/authorize` with PKCE S256 and `resource=<origin>/mcp` (the value in `/.well-known/oauth-protected-resource`), and exchanges the code at `/oauth/token`. The person signs in with Google on Octo and picks one workspace on the consent page. The access token works on the `/api/*` routes as well as `/mcp`. `GET /api/me` with it returns `principal` (who they are), `apiKey.workspaceId`, and `workspace: { id, role }`, their live role in the bound workspace, which is `null` once they are no longer a member.
 
 ## How workspaces are kept apart
 

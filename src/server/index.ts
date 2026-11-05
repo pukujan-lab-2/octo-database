@@ -22,6 +22,7 @@ import { handleJobsRoutes } from '../routes/jobs';
 import { handleKeysRoutes } from '../routes/keys';
 import { handleMcpRoutes } from '../routes/mcp';
 import { handleMeRoutes } from '../routes/me';
+import { handleMembersRoutes } from '../routes/members';
 import { handleOpsRoutes } from '../routes/ops';
 import { handlePublicFilesRoutes } from '../routes/public-files';
 import { handleRagRoutes } from '../routes/rag';
@@ -62,6 +63,7 @@ const ROUTES: RouteHandler[] = [
   handleAuthRoutes,
   handleMeRoutes,
   handleWorkspacesRoutes,
+  handleMembersRoutes,
   handleFilesRoutes,
   handleGalleryRoutes,
   handleKeysRoutes,

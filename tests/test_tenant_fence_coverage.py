@@ -28,6 +28,7 @@ EXEMPT = {
     "oauth_auth_codes": "no policy; app role denied, service role only",
     "oauth_refresh_tokens": "no policy; app role denied, service role only",
     "workspace_database_credentials": "no policy; app role denied, service role only",
+    "workspace_invites": "no policy; app role denied, service role only",
 }
 
 CREATE_TABLE = re.compile(

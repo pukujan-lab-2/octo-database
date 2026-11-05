@@ -1,5 +1,6 @@
 /**
- * OAuth 2.1 authorization server for the remote MCP endpoint.
+ * OAuth 2.1 authorization server for the remote MCP endpoint. A web app may use
+ * it the same way to sign people in; its token is accepted on the /api routes too.
  *
  * ChatGPT custom connectors cannot hold a bearer key: they offer only OAuth or
  * "no authentication". This module is the server side of that dance, sized to

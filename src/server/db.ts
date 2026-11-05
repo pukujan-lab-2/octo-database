@@ -399,6 +399,142 @@ export async function dbGetWorkspaceMembership(
   return rows[0] ?? null;
 }
 
+export interface WorkspaceMemberRow {
+  principalId: string;
+  email: string;
+  displayName: string | null;
+  role: string;
+  createdAt: string;
+}
+
+export interface WorkspaceInviteRow {
+  email: string;
+  role: string;
+  invitedBy: string | null;
+  createdAt: string;
+}
+
+/** A workspace's members and its additions still waiting for a first sign-in (#82). */
+export async function dbListWorkspaceMembers(
+  workspaceId: string
+): Promise<{ members: WorkspaceMemberRow[]; pending: WorkspaceInviteRow[] }> {
+  const members = await queryService<WorkspaceMemberRow>(
+    `SELECT m.principal_id AS "principalId", p.email, p.display_name AS "displayName", m.role,
+            m.created_at AS "createdAt"
+     FROM octo.workspace_memberships m JOIN octo.principals p ON p.id = m.principal_id
+     WHERE m.workspace_id = $1
+     ORDER BY m.created_at`,
+    [workspaceId]
+  );
+  const pending = await queryService<WorkspaceInviteRow>(
+    `SELECT email, role, invited_by AS "invitedBy", created_at AS "createdAt"
+     FROM octo.workspace_invites WHERE workspace_id = $1 ORDER BY created_at`,
+    [workspaceId]
+  );
+  return { members, pending };
+}
+
+/** The principal signed in with this email, if any. Emails compare case-insensitively. */
+export async function dbFindPrincipalByEmail(
+  email: string
+): Promise<{ id: string; email: string; displayName: string | null } | null> {
+  const rows = await queryService<{ id: string; email: string; displayName: string | null }>(
+    `SELECT id, email, display_name AS "displayName" FROM octo.principals
+     WHERE lower(email) = lower($1)
+     ORDER BY is_guest, created_at LIMIT 1`,
+    [email]
+  );
+  return rows[0] ?? null;
+}
+
+/** Records an addition for an email nobody has signed in with yet; a repeat updates the role. */
+export async function dbUpsertWorkspaceInvite(
+  workspaceId: string,
+  email: string,
+  role: string,
+  invitedBy: string
+): Promise<WorkspaceInviteRow> {
+  const rows = await queryService<WorkspaceInviteRow>(
+    `INSERT INTO octo.workspace_invites (workspace_id, email, role, invited_by)
+     VALUES ($1, lower($2), $3, $4)
+     ON CONFLICT (workspace_id, email) DO UPDATE SET role = EXCLUDED.role, invited_by = EXCLUDED.invited_by
+     RETURNING email, role, invited_by AS "invitedBy", created_at AS "createdAt"`,
+    [workspaceId, email, role, invitedBy]
+  );
+  return rows[0]!;
+}
+
+/**
+ * Turns every waiting addition for this email into a membership, at first sign-in.
+ * An existing membership keeps its role. Returns the workspaces joined.
+ */
+export async function dbClaimWorkspaceInvites(
+  principalId: string,
+  email: string
+): Promise<{ workspaceId: string; role: string }[]> {
+  return withTransaction(async (client) => {
+    const claimed = await client.query(
+      `DELETE FROM octo.workspace_invites WHERE email = lower($1)
+       RETURNING workspace_id AS "workspaceId", role`,
+      [email]
+    );
+    const rows = claimed.rows as { workspaceId: string; role: string }[];
+    for (const row of rows) {
+      await client.query(
+        `INSERT INTO octo.workspace_memberships (workspace_id, principal_id, role)
+         VALUES ($1, $2, $3) ON CONFLICT (workspace_id, principal_id) DO NOTHING`,
+        [row.workspaceId, principalId, row.role]
+      );
+    }
+    return rows;
+  }, servicePool);
+}
+
+/**
+ * Removes a member and every standing credential they hold for this workspace: the
+ * workspace-pinned API keys they minted and the OAuth refresh tokens issued for it.
+ * Route checks read membership live, so access tokens already out stop working on
+ * their next request; revoking the rest keeps them dead if the person is re-added.
+ * Never removes the owner. Also drops a waiting addition for the same email.
+ */
+export async function dbRemoveWorkspaceMember(
+  workspaceId: string,
+  email: string
+): Promise<{ membershipRemoved: boolean; inviteRemoved: boolean; keysRevoked: number }> {
+  return withTransaction(async (client) => {
+    const removed = await client.query(
+      `DELETE FROM octo.workspace_memberships m
+       USING octo.principals p
+       WHERE m.workspace_id = $1 AND m.principal_id = p.id AND lower(p.email) = lower($2)
+         AND m.role <> 'owner'
+       RETURNING m.principal_id AS "principalId"`,
+      [workspaceId, email]
+    );
+    const principalIds = (removed.rows as { principalId: string }[]).map((r) => r.principalId);
+    let keysRevoked = 0;
+    if (principalIds.length > 0) {
+      const keys = await client.query(
+        // Revoking a key deletes its row; a trigger keeps its hash in revoked_api_keys.
+        `DELETE FROM octo.api_keys
+         WHERE workspace_id = $1 AND principal_id = ANY($2::uuid[])
+         RETURNING id`,
+        [workspaceId, principalIds]
+      );
+      keysRevoked = keys.rows.length;
+      await client.query(
+        `UPDATE octo.oauth_refresh_tokens SET revoked_at = now()
+         WHERE workspace_id = $1 AND principal_id = ANY($2::uuid[]) AND revoked_at IS NULL`,
+        [workspaceId, principalIds]
+      );
+    }
+    const invite = await client.query(
+      'DELETE FROM octo.workspace_invites WHERE workspace_id = $1 AND email = lower($2) RETURNING email',
+      [workspaceId, email]
+    );
+    return { membershipRemoved: principalIds.length > 0, inviteRemoved: invite.rows.length > 0, keysRevoked };
+  }, servicePool);
+}
+
 // 2. File Catalog Operations
 export async function dbInsertFile(
   id: string,

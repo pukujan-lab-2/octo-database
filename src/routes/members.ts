@@ -13,14 +13,15 @@
 
 import { OctoScope } from '../api/capabilities';
 import { WorkspaceRole } from '../types/auth';
-import { authenticateRequest, effectiveWorkspaceRole, keyWorkspaceMatches, requireScope, roleMeetsMinimum, scopeDenied } from '../server/auth-context';
-import { confirmGate } from '../server/confirm';
-import { dbFindPrincipalByEmail, dbGetWorkspaceMembership, dbInsertMembership, dbListWorkspaceMembers, dbRecordActivity, dbRemoveWorkspaceMember, dbUpsertWorkspaceInvite } from '../server/db';
+import { issueConfirmChallenge } from '../auth/confirm-challenge';
+import { authenticateRequest, effectiveWorkspaceRole, isOAuthToken, keyWorkspaceMatches, requireScope, roleMeetsMinimum, scopeDenied } from '../server/auth-context';
+import { confirmGate, oauthMemberChallengeKey, oauthMemberConfirmGate } from '../server/confirm';
+import { dbFindPrincipalByEmail, dbGetMfa, dbGetWorkspaceMembership, dbInsertMembership, dbListWorkspaceMembers, dbRecordActivity, dbRemoveWorkspaceMember, dbUpsertWorkspaceInvite } from '../server/db';
 import { readJsonObject, sendJson } from '../server/http';
 import { UUID_PATTERN } from '../server/runtime';
 import { IncomingMessage, ServerResponse } from 'http';
 
-const MEMBERS_PATH = /^\/api\/workspaces\/([^/]+)\/members$/;
+const MEMBERS_PATH = /^\/api\/workspaces\/([^/]+)\/members(\/confirm-challenge)?$/;
 /** Roles this route may grant. Ownership is never handed out here. */
 const GRANTABLE_ROLES: WorkspaceRole[] = ['admin', 'operator', 'member'];
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -32,8 +33,10 @@ export async function handleMembersRoutes(
 ): Promise<boolean> {
   const match = MEMBERS_PATH.exec(url.pathname);
   if (!match) return false;
-  const scope: OctoScope | null =
-    req.method === 'GET' ? 'read' : req.method === 'POST' ? 'write' : req.method === 'DELETE' ? 'delete' : null;
+  const challenge = Boolean(match[2]);
+  const scope: OctoScope | null = challenge
+    ? req.method === 'POST' ? 'write' : null
+    : req.method === 'GET' ? 'read' : req.method === 'POST' ? 'write' : req.method === 'DELETE' ? 'delete' : null;
   if (!scope) return false;
 
   const auth = await authenticateRequest(req);
@@ -65,6 +68,22 @@ export async function handleMembersRoutes(
     return true;
   }
 
+  // POST /api/workspaces/:id/members/confirm-challenge
+  // A code for an OAuth token's member change: the web app shows it to the person
+  // signed in, who types it back. A session asks at /api/me/confirm-challenge.
+  if (challenge) {
+    if (!isOAuthToken(auth)) {
+      sendJson(res, 403, {
+        error: 'FORBIDDEN: Only an OAuth token asks here; a person\'s session uses POST /api/me/confirm-challenge.',
+      });
+      return true;
+    }
+    const issued = issueConfirmChallenge(oauthMemberChallengeKey(auth.principal.id, workspaceId));
+    const mfa = await dbGetMfa(auth.principal.id);
+    sendJson(res, 200, { ...issued, mfaRequired: Boolean(mfa?.confirmedAt) });
+    return true;
+  }
+
   // GET /api/workspaces/:id/members
   if (req.method === 'GET') {
     sendJson(res, 200, await dbListWorkspaceMembers(workspaceId));
@@ -72,8 +91,10 @@ export async function handleMembersRoutes(
   }
 
   const parsed = await readJsonObject(req);
-  if (!(await confirmGate(res, auth, parsed.confirmSecret, { requireMfa: true, mfaCode: parsed.mfaCode })))
-    return true;
+  const confirmed = isOAuthToken(auth)
+    ? await oauthMemberConfirmGate(res, auth, workspaceId, parsed.confirmSecret, parsed.mfaCode)
+    : await confirmGate(res, auth, parsed.confirmSecret, { requireMfa: true, mfaCode: parsed.mfaCode });
+  if (!confirmed) return true;
 
   const email = typeof parsed.email === 'string' ? parsed.email.trim().toLowerCase() : '';
   if (!EMAIL_PATTERN.test(email)) {

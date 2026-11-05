@@ -140,3 +140,34 @@ export async function verifyMfaCode(principalId: string, mfa: MfaRecord, supplie
   // presenting the same code cannot both succeed.
   return dbConsumeMfaRecoveryCode(principalId, hashRecoveryCode(supplied));
 }
+
+/** The key a member-route challenge is held under: one person, one workspace, OAuth only. */
+export function oauthMemberChallengeKey(principalId: string, workspaceId: string): string {
+  return `oauth-members:${principalId}:${workspaceId}`;
+}
+
+/**
+ * The confirm gate for an OAuth token on the member routes only (#82). A web app
+ * signed in as a workspace owner or admin asks for a code with
+ * POST /api/workspaces/:id/members/confirm-challenge, shows it to the person, and
+ * sends back what they type, plus a TOTP code when they enrolled MFA. The code is
+ * held apart from the person's session codes and is good for this workspace only,
+ * and passing opens no fifteen-minute window: every add or remove needs a new code.
+ * Every other gated action still refuses OAuth tokens through confirmGate.
+ */
+export async function oauthMemberConfirmGate(
+  res: ServerResponse,
+  auth: AuthContext,
+  workspaceId: string,
+  suppliedCode: unknown,
+  mfaCode: unknown
+): Promise<boolean> {
+  if (!acceptConfirmChallenge(oauthMemberChallengeKey(auth.principal.id, workspaceId), suppliedCode)) {
+    sendJson(res, 403, {
+      error:
+        'CONFIRM_CODE_INVALID: Ask for a code at POST /api/workspaces/<id>/members/confirm-challenge and send the code the person typed as confirmSecret.',
+    });
+    return false;
+  }
+  return confirmMfa(res, auth, { requireMfa: true, mfaCode });
+}

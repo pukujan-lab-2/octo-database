@@ -62,6 +62,10 @@ Octo uses three layers, from the outside in.
 
 Policies use helpers such as `octo.is_workspace_member()` and `octo.current_workspace_id()`. A RESTRICTIVE `tenant_scope_fence` policy on the tenant tables makes sure a workspace-pinned key never sees another workspace's rows, even where another policy would allow it (migration `20261001080000_slice14_key_scope_isolation.sql` and later ones). Tables that only the server should touch (stored database passwords, OAuth state, key-use logs) have RLS on and no policy at all, so only `octo_service` reaches them.
 
+So a query that forgets its `WHERE workspace_id = …` still returns only the caller's rows: every table is owned by `postgres`, and `octo_app` is neither the owner nor a superuser, so RLS applies to it without `FORCE ROW LEVEL SECURITY`. `scripts/verify-key-scope-fence.ts` proves this in CI against a real cluster. It runs an unfiltered `SELECT` on every table with a `workspace_id` column, as a scoped key and as a principal in no workspace (#10).
+
+What `octo_service` still does on a request: login and key lookup before an identity exists, the membership check itself, public share and media lookups, the jobs and activity control writes, MFA and confirm secrets, and reading other members' emails for the Umami team. On those paths the workspace boundary is the query's own filter.
+
 **3. A database per workspace.** `src/server/provisioning.ts` creates `octo_ws_<slug>_<random>` with its own login role `<db>_rw` (`NOSUPERUSER NOCREATEDB NOCREATEROLE`), revokes `CONNECT` from everyone else, and enables `vector`. This runs on a separate admin connection (`OCTO_ADMIN_URL`). The catalog row goes into `octo.workspace_databases`, and the role's password is stored encrypted. A workspace gets its database automatically when it is created through the API (`src/server/auto-provision.ts`, best effort); sign-in sandboxes do not.
 
 **The SQL surface** (`POST /api/workspaces/:id/query`, `src/server/query.ts`) connects as that workspace's `_rw` role, never as an admin. Without the `write` scope the statement runs in `BEGIN READ ONLY`. Results cap at 1,000 rows by default and 10,000 at most; statements time out after 30 seconds.
@@ -182,7 +186,6 @@ These are true of `main` today. Each is a fact to plan around, not a decision. T
 
 - **The nightly backup misses workspace databases.** `deploy/mac/backup.sh` runs `pg_dump -d postgres`, so only the control database is saved (#202).
 - **Row-level security depends on configuration.** If `OCTO_DB_URL` and `OCTO_SERVICE_URL` are unset, both pools fall back to `DATABASE_URL`, a superuser, and RLS filters nothing (#111). Production sets both.
-- **`octo.graph_projections` has no tenant fence**, unlike the other tenant tables.
 - **Two concurrent database provisions for one workspace** can both pass the "already provisioned" check; the loser would leave an orphaned database and role.
 - **An archive job can prune bytes an on-demand recall just restored**, leaving the file `active_r2` with no R2 bytes until a restore job runs. Drive keeps its copy.
 - **A request already past authentication finishes after its key is revoked.** Revocation stops new requests only.

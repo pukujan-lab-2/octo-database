@@ -2410,7 +2410,7 @@ export async function dbGetWorkspaceById(workspaceId: string): Promise<{
 export async function dbGetWorkspaceUmami(
   workspaceId: string
 ): Promise<{ teamId: string | null; websiteId: string | null } | null> {
-  const rows = await queryService<{ teamId: string | null; websiteId: string | null }>(
+  const rows = await query<{ teamId: string | null; websiteId: string | null }>(
     `SELECT umami_team_id AS "teamId", umami_website_id AS "websiteId" FROM octo.workspaces WHERE id = $1`,
     [workspaceId]
   );
@@ -2419,7 +2419,7 @@ export async function dbGetWorkspaceUmami(
 
 /** Stores the Umami ids once; returns false when the workspace already has a website. */
 export async function dbSetWorkspaceUmami(workspaceId: string, teamId: string, websiteId: string): Promise<boolean> {
-  const rows = await queryService<{ id: string }>(
+  const rows = await query<{ id: string }>(
     `UPDATE octo.workspaces SET umami_team_id = $2, umami_website_id = $3
      WHERE id = $1 AND umami_website_id IS NULL RETURNING id`,
     [workspaceId, teamId, websiteId]
@@ -3716,7 +3716,7 @@ export async function dbRegisterDatasetVersion(
       ).rows[0] as Record<string, unknown>;
 
       return { status: 'created' as const, version: toDatasetVersionRecord(row) };
-    }, servicePool);
+    });
   } catch (error) {
     if ((error as { code?: string }).code === '23505') return { status: 'conflict' };
     throw error;
@@ -3725,9 +3725,10 @@ export async function dbRegisterDatasetVersion(
 
 export async function dbGetDatasetVersion(
   workspaceId: string,
-  datasetVersionId: string
+  datasetVersionId: string,
+  run: typeof query = query
 ): Promise<DatasetVersionRecord | null> {
-  const rows = await queryService<Record<string, unknown>>(
+  const rows = await run<Record<string, unknown>>(
     `SELECT ${DATASET_VERSION_COLUMNS}
      FROM octo.dataset_versions v
      JOIN octo.datasets d ON d.id = v.dataset_id
@@ -3740,9 +3741,10 @@ export async function dbGetDatasetVersion(
 /** The newest version of a workspace's dataset, by slug. */
 export async function dbGetLatestDatasetVersion(
   workspaceId: string,
-  datasetSlug: string
+  datasetSlug: string,
+  run: typeof query = query
 ): Promise<DatasetVersionRecord | null> {
-  const rows = await queryService<Record<string, unknown>>(
+  const rows = await run<Record<string, unknown>>(
     `SELECT ${DATASET_VERSION_COLUMNS}
      FROM octo.dataset_versions v
      JOIN octo.datasets d ON d.id = v.dataset_id
@@ -3779,7 +3781,7 @@ export async function dbCreateWorkspaceSpec(input: {
   params: SpecParam[];
 }): Promise<WorkspaceSpecRecord | null> {
   try {
-    const rows = await queryService<Record<string, unknown>>(
+    const rows = await query<Record<string, unknown>>(
       `INSERT INTO octo.analytics_specs (workspace_id, slug, version, sql, params, created_by)
        SELECT $1, $2, COALESCE(max(version), 0) + 1, $3, $4, $5
        FROM octo.analytics_specs WHERE workspace_id = $1 AND slug = $2
@@ -3797,9 +3799,10 @@ export async function dbCreateWorkspaceSpec(input: {
 export async function dbGetWorkspaceSpec(
   workspaceId: string,
   slug: string,
-  version: number
+  version: number,
+  run: typeof query = query
 ): Promise<WorkspaceSpecRecord | null> {
-  const rows = await queryService<Record<string, unknown>>(
+  const rows = await run<Record<string, unknown>>(
     `SELECT ${WORKSPACE_SPEC_COLUMNS} FROM octo.analytics_specs
      WHERE workspace_id = $1 AND slug = $2 AND version = $3`,
     [workspaceId, slug, version]
@@ -3808,7 +3811,7 @@ export async function dbGetWorkspaceSpec(
 }
 
 export async function dbListWorkspaceSpecs(workspaceId: string): Promise<WorkspaceSpecRecord[]> {
-  const rows = await queryService<Record<string, unknown>>(
+  const rows = await query<Record<string, unknown>>(
     `SELECT ${WORKSPACE_SPEC_COLUMNS} FROM octo.analytics_specs
      WHERE workspace_id = $1 ORDER BY slug, version DESC`,
     [workspaceId]
@@ -3847,7 +3850,7 @@ export async function dbCreateAnalyticsSchedule(input: {
   everyMinutes: number;
   sink: AnalyticsSink;
 }): Promise<AnalyticsScheduleRecord> {
-  const rows = await queryService<Record<string, unknown>>(
+  const rows = await query<Record<string, unknown>>(
     `INSERT INTO octo.analytics_schedules
        (workspace_id, spec, dataset, params, every_minutes, sink, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -3866,7 +3869,7 @@ export async function dbCreateAnalyticsSchedule(input: {
 }
 
 export async function dbListAnalyticsSchedules(workspaceId: string): Promise<AnalyticsScheduleRecord[]> {
-  const rows = await queryService<Record<string, unknown>>(
+  const rows = await query<Record<string, unknown>>(
     `SELECT ${SCHEDULE_COLUMNS} FROM octo.analytics_schedules WHERE workspace_id = $1 ORDER BY created_at`,
     [workspaceId]
   );
@@ -3874,7 +3877,7 @@ export async function dbListAnalyticsSchedules(workspaceId: string): Promise<Ana
 }
 
 export async function dbDeleteAnalyticsSchedule(workspaceId: string, id: string): Promise<boolean> {
-  const rows = await queryService<{ id: string }>(
+  const rows = await query<{ id: string }>(
     'DELETE FROM octo.analytics_schedules WHERE workspace_id = $1 AND id = $2 RETURNING id',
     [workspaceId, id]
   );
@@ -3908,7 +3911,7 @@ export async function dbMarkAnalyticsScheduleRan(
 }
 
 export async function dbGetAnalyticsJob(workspaceId: string, jobId: string): Promise<DbJobRow | null> {
-  const rows = await queryService<DbJobRow>(
+  const rows = await query<DbJobRow>(
     `SELECT ${JOB_COLUMNS} FROM octo.jobs
      WHERE id = $1 AND workspace_id = $2 AND job_type = 'analytics_query'`,
     [jobId, workspaceId]
@@ -3920,7 +3923,7 @@ export async function dbGetAnalyticsResult(
   workspaceId: string,
   resultId: string
 ): Promise<AnalyticsResultRecord | null> {
-  const rows = await queryService<Record<string, unknown>>(
+  const rows = await query<Record<string, unknown>>(
     `SELECT ${ANALYTICS_RESULT_COLUMNS} FROM octo.analytics_results
      WHERE id = $1 AND workspace_id = $2`,
     [resultId, workspaceId]
@@ -3930,9 +3933,10 @@ export async function dbGetAnalyticsResult(
 
 export async function dbGetAnalyticsResultByJob(
   workspaceId: string,
-  jobId: string
+  jobId: string,
+  run: typeof query = query
 ): Promise<AnalyticsResultRecord | null> {
-  const rows = await queryService<Record<string, unknown>>(
+  const rows = await run<Record<string, unknown>>(
     `SELECT ${ANALYTICS_RESULT_COLUMNS} FROM octo.analytics_results
      WHERE job_id = $1 AND workspace_id = $2`,
     [jobId, workspaceId]
@@ -3942,7 +3946,7 @@ export async function dbGetAnalyticsResultByJob(
 
 /** Lists the workspace's logical datasets with their newest version. */
 export async function dbListDatasets(workspaceId: string): Promise<DatasetSummary[]> {
-  const rows = await queryService<{
+  const rows = await query<{
     datasetId: string;
     dataset: string;
     name: string;
@@ -3991,7 +3995,7 @@ export async function dbListAnalyticsRuns(
   workspaceId: string,
   limit = 20
 ): Promise<AnalyticsRunSummary[]> {
-  const rows = await queryService<{
+  const rows = await query<{
     jobId: string;
     state: string;
     errorCode: string | null;
@@ -4072,7 +4076,7 @@ export async function dbRegisterAnalyticsResult(input: {
     ]
   );
 
-  const existing = await dbGetAnalyticsResultByJob(input.workspaceId, input.jobId);
+  const existing = await dbGetAnalyticsResultByJob(input.workspaceId, input.jobId, queryService);
   if (!existing) throw new Error('RESULT_REGISTRATION_FAILED');
   return existing;
 }

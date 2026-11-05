@@ -8,9 +8,9 @@
 import { hashApiKeySecret } from '../api/keys';
 import { issueConfirmChallenge } from '../auth/confirm-challenge';
 import { decryptSecret, encryptSecret, generateRecoveryCodes, generateTotpSecret, hashRecoveryCode, totpProvisioningUri, verifyTotpCode } from '../lib/mfa';
-import { authenticateRequest } from '../server/auth-context';
+import { authenticateRequest, effectiveWorkspaceRole } from '../server/auth-context';
 import { verifyMfaCode } from '../server/confirm';
-import { dbClearMfa, dbConfirmMfa, dbGetConfirmSecretHash, dbGetMfa, dbSetConfirmSecret, dbSetMfaPending, dbSetMfaRecoveryCodes } from '../server/db';
+import { dbClearMfa, dbConfirmMfa, dbGetConfirmSecretHash, dbGetMfa, dbGetWorkspaceMembership, dbSetConfirmSecret, dbSetMfaPending, dbSetMfaRecoveryCodes } from '../server/db';
 import { readJsonObject, sendJson } from '../server/http';
 import { IncomingMessage, ServerResponse } from 'http';
 
@@ -33,9 +33,19 @@ export async function handleMeRoutes(
     // MFA is enrolled so it can prompt for a code.
     const confirmSecretSet = Boolean(await dbGetConfirmSecretHash(auth.principal.id));
     const mfa = await dbGetMfa(auth.principal.id);
+    // A workspace-bound credential (an OAuth token, from an MCP client or a web
+    // app, or a workspace key) also learns its live role there; null once the
+    // person is no longer a member (#82).
+    const boundWorkspaceId = auth.apiKey?.workspaceId ?? null;
+    const boundMembership = boundWorkspaceId
+      ? await dbGetWorkspaceMembership(boundWorkspaceId, auth.principal.id)
+      : null;
     sendJson(res, 200, {
       principal: auth.principal,
       apiKey: auth.apiKey ?? null,
+      workspace: boundWorkspaceId
+        ? { id: boundWorkspaceId, role: boundMembership ? effectiveWorkspaceRole(auth, boundMembership.role) : null }
+        : null,
       confirmSecretSet,
       mfaEnabled: Boolean(mfa?.confirmedAt),
       mfaRecoveryCodesRemaining: mfa?.recoveryCodeHashes.length ?? 0,

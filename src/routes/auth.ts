@@ -8,7 +8,7 @@
 import { guestSlug, personalSlug } from '../lib/provisioning-slug';
 import { getPublicOrigin } from '../lib/public-origin';
 import { signSessionToken } from '../lib/session-token';
-import { dbGetAuthorizedWorkspaces, dbInsertGuestPrincipal, dbInsertMembership, dbInsertWorkspace, dbUpsertGooglePrincipal } from '../server/db';
+import { dbClaimWorkspaceInvites, dbGetAuthorizedWorkspaces, dbInsertGuestPrincipal, dbInsertMembership, dbInsertWorkspace, dbUpsertGooglePrincipal } from '../server/db';
 import { getGoogleClientCredentials, verifyTurnstile } from '../server/google-auth';
 import { readJsonObject, sendJson } from '../server/http';
 import { createHash, randomUUID } from 'crypto';
@@ -105,6 +105,7 @@ export async function handleAuthRoutes(
       let email = '';
       let displayName: string | null = null;
       let avatarUrl: string | null = null;
+      let emailVerified = false;
 
       if (tokenData.id_token) {
         try {
@@ -115,6 +116,7 @@ export async function handleAuthRoutes(
             email = payload.email ?? '';
             displayName = payload.name ?? null;
             avatarUrl = payload.picture ?? null;
+            emailVerified = payload.email_verified === true;
           }
         } catch (e) {
           console.warn('Could not parse Google id_token payload:', e);
@@ -131,11 +133,13 @@ export async function handleAuthRoutes(
             email?: string;
             name?: string;
             picture?: string;
+            email_verified?: boolean;
           };
           sub = userinfo.sub ?? sub;
           email = userinfo.email ?? email;
           displayName = userinfo.name ?? displayName;
           avatarUrl = userinfo.picture ?? avatarUrl;
+          emailVerified = userinfo.email_verified ?? emailVerified;
         }
       }
 
@@ -166,10 +170,15 @@ export async function handleAuthRoutes(
         await dbInsertMembership(ws.id, principal.id, 'owner');
       }
 
+      // A workspace owner may have added this email before the person ever signed
+      // in (#82). Only a Google-verified email claims those additions.
+      const joined = emailVerified ? await dbClaimWorkspaceInvites(principal.id, email) : [];
+
       console.log('Google sign-in completed:', {
         principalId: principal.id,
         isPlatformOwner: principal.isPlatformOwner,
         provisionedWorkspace: workspaces.length === 0,
+        joinedWorkspaces: joined.length,
       });
       res.writeHead(302, { Location: `${origin}/#token=${signSessionToken(principal.id)}` });
       res.end();

@@ -32,7 +32,7 @@ What a workspace can use, all optional:
 - **Agents and apps** use API keys (`read`, `write`, `files`, `delete` scopes; account-wide or pinned to one workspace) or MCP OAuth tokens bound to one workspace. An agent is not a separate account: it acts with a credential that belongs to a person.
 - **Other repositories** adopt Octo over its public surfaces and never change this repository (see AGENTS.md, "Adopters do not modify this repository").
 
-**Where it runs:** production is the `production` branch, deployed by Komodo on the always-on VPS when that branch moves (see [`docs/self-hosting.md`](docs/self-hosting.md) and `Pukujan-lab/server-management` `vps/PLAN.md`). Heavy AI models (PDF reader, reranker) run on demand on other machines and are reached over Tailscale.
+**Where it runs:** production is the `production` branch, deployed by Komodo on the always-on VPS when that branch moves (see [`docs/self-hosting.md`](docs/self-hosting.md) and `pukujan-lab-2/server-management` `vps/PLAN.md`). Heavy AI models (PDF reader, reranker) run on demand on other machines and are reached over Tailscale.
 
 Deep administration stays in mature tools: Postgres clients for databases, Phoenix for traces, Umami for UX analytics, Komodo for deploys.
 

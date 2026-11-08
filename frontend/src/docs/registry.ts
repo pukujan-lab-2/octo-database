@@ -6,6 +6,7 @@ import { SqlPage } from "./pages/SqlPage";
 import { FilesPage } from "./pages/FilesPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { RetrievalPage } from "./pages/RetrievalPage";
+import { ObservabilityPage } from "./pages/ObservabilityPage";
 import { VaultPage } from "./pages/VaultPage";
 import { McpPage } from "./pages/McpPage";
 import { ApiPage } from "./pages/ApiPage";
@@ -21,6 +22,7 @@ export const DOCS_CONTENT: Record<string, ComponentType> = {
   files: FilesPage,
   analytics: AnalyticsPage,
   retrieval: RetrievalPage,
+  observability: ObservabilityPage,
   vault: VaultPage,
   mcp: McpPage,
   api: ApiPage,

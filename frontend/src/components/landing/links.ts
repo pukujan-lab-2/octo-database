@@ -2,6 +2,6 @@
 export const INTEGRATION_GUIDE_URL = "/docs";
 
 export const ARCHITECTURE_URL =
-  "https://github.com/Pukujan-lab/octo-database/blob/main/docs/ARCHITECTURE.md";
+  "https://github.com/pukujan-lab-2/octo-database/blob/main/docs/ARCHITECTURE.md";
 
-export const REPOSITORY_URL = "https://github.com/Pukujan-lab/octo-database";
+export const REPOSITORY_URL = "https://github.com/pukujan-lab-2/octo-database";

@@ -25,6 +25,10 @@ const SURFACES = [
     body: "A bitemporal claim ledger, plus a Cypher-queryable graph projection rebuilt from it.",
   },
   {
+    title: "Traces and UX analytics",
+    body: "Send OTLP traces and eval scores with your Octo key; get a Umami website per workspace. Agents read both back.",
+  },
+  {
     title: "Vault",
     body: "Store a vendor credential once and let an agent spend it without ever holding the secret.",
   },

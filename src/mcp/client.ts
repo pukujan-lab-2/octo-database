@@ -164,6 +164,7 @@ export class OctoApi {
     limit?: number;
     filter?: { documentIds?: string[]; titlePrefix?: string; latestVersionOnly?: boolean };
     rerank?: boolean;
+    graph?: boolean | { relations?: string[]; seeds?: number; hops?: 1 | 2 };
   }): Promise<unknown> {
     return this.request('POST', '/api/rag/query', {
       workspaceId: input.workspaceId,
@@ -171,6 +172,7 @@ export class OctoApi {
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       ...(input.filter === undefined ? {} : { filter: input.filter }),
       ...(input.rerank === undefined ? {} : { rerank: input.rerank }),
+      ...(input.graph === undefined ? {} : { graph: input.graph }),
     });
   }
 
@@ -214,6 +216,29 @@ export class OctoApi {
       'DELETE',
       `/api/rag/documents/${encodeURIComponent(input.documentId)}?workspaceId=${encodeURIComponent(input.workspaceId)}`
     );
+  }
+
+  addDocumentLinks(input: {
+    workspaceId: string;
+    links: Array<{ fromDocumentId: string; toDocumentId: string; relation: string }>;
+  }): Promise<unknown> {
+    return this.request('POST', '/api/rag/links', { workspaceId: input.workspaceId, links: input.links });
+  }
+
+  listDocumentLinks(input: { workspaceId: string; documentId?: string }): Promise<unknown> {
+    const params = new URLSearchParams({ workspaceId: input.workspaceId });
+    if (input.documentId !== undefined) params.set('documentId', input.documentId);
+    return this.request('GET', `/api/rag/links?${params}`);
+  }
+
+  removeDocumentLink(input: {
+    workspaceId: string;
+    fromDocumentId: string;
+    toDocumentId: string;
+    relation: string;
+  }): Promise<unknown> {
+    const params = new URLSearchParams(input);
+    return this.request('DELETE', `/api/rag/links?${params}`);
   }
 
   graphQuery(input: {

@@ -38,7 +38,7 @@ const GUIDE_TOPICS: Record<string, string> = {
   ux:
     "UX analytics is Umami: clicks, session replays (every form field masked) and heatmaps, one website per workspace. get_ux_analytics says whether it is on. An owner or admin turns it on with enable_ux_analytics (the app's domain) and adds the returned tracking tags to the app. read_ux_analytics reads it back: resource is stats, pageviews, metrics, events, sessions, replays or active; the window defaults to the last 7 days and takes startAt and endAt in milliseconds. A person opens the Umami UI from Services in the Octo app.",
   recipes:
-    "Pick the tool by the need. Store or read rows: provision_database, then query_workspace_database. Search or ask over documents: ingest_document, then query_workspace. Relationships between things: project_graph, then query_graph. Record what was believed and when: record_epistemic, query_claims_as_of, query_belief_as_of. Totals over many rows or over time: register_dataset, then query_dataset. A run failed: get_ops_summary, then retry_job. See what an agent did: read_traces; score it: record_eval_scores. See how people use an app: get_ux_analytics, enable_ux_analytics, read_ux_analytics. Files: upload_file, list_files, download_file. Each surface has a guide topic with the details.",
+    "Pick the tool by the need. Store or read rows: provision_database, then query_workspace_database. Search or ask over documents: ingest_document, then query_workspace; link_documents records which documents cite or depend on which, and query_workspace with graph: true follows those links. Relationships between things: project_graph, then query_graph. Record what was believed and when: record_epistemic, query_claims_as_of, query_belief_as_of. Totals over many rows or over time: register_dataset, then query_dataset. A run failed: get_ops_summary, then retry_job. See what an agent did: read_traces; score it: record_eval_scores. See how people use an app: get_ux_analytics, enable_ux_analytics, read_ux_analytics. Files: upload_file, list_files, download_file. Each surface has a guide topic with the details.",
   vault:
     "Tokens are told apart by prefix: octo_live_ is an API key (cannot open the vault), octo_vault_ is a vault grant (lists items, mints working keys), octo_tmp_ is a working key. A grant mints a working key for one stored item with POST /api/vault/open/lease. A working key works only through POST/GET /api/vault/proxy, with the upstream URL in x-octo-target; it never reveals the stored secret. The target can be Octo's own API: if the stored item is an Octo workspace key, a lease on it can call .../api/workspaces/<id>/otel/read/<resource> or run SQL, so use it instead of asking for the account key.",
   keys: 'mint_key is human-stamped: it needs a session with the confirmation secret. A token can only narrow its own authority, never widen scopes or escape its workspace. The raw secret is shown exactly once.',
@@ -67,6 +67,9 @@ export const TOOL_ACTIONS: Record<string, string> = {
   get_document: 'rag.get',
   rename_document: 'rag.rename',
   delete_document: 'rag.delete',
+  link_documents: 'rag.link',
+  list_document_links: 'rag.links',
+  unlink_documents: 'rag.unlink',
   query_graph: 'graph.query',
   project_graph: 'graph.project',
   graph_health: 'graph.health',
@@ -305,7 +308,7 @@ export function createOctoMcpServer(api: OctoApi): McpServer {
 
   server.tool(
     'query_workspace',
-    'Answer a natural-language question from a workspace\'s indexed documents. Each match carries documentId, title, versionNumber and page (PDFs). The optional filter narrows the search before its limit.',
+    'Answer a natural-language question from a workspace\'s indexed documents. Each match carries documentId, title, versionNumber and page (PDFs). The optional filter narrows the search before its limit. graph: true also follows the workspace\'s document links (link_documents) from the best matches, so a linked document can match without sharing words or meaning with the question; those matches carry graph.linkedFrom.',
     {
       workspaceId: z.string().describe('The workspace to query'),
       query: z.string().describe('The question to answer'),
@@ -322,10 +325,21 @@ export function createOctoMcpServer(api: OctoApi): McpServer {
         .boolean()
         .optional()
         .describe('Re-score the top candidates with the reranker model (on by default when one is configured; false skips it)'),
+      graph: z
+        .union([
+          z.boolean(),
+          z.object({
+            relations: z.array(z.string()).optional().describe('Follow only these link relations (default: all)'),
+            seeds: z.number().int().min(1).max(20).optional().describe('How many top matching documents to follow links from (default 5)'),
+            hops: z.union([z.literal(1), z.literal(2)]).optional().describe('1 follows direct links (default); 2 also follows their links'),
+          }),
+        ])
+        .optional()
+        .describe('Also search documents linked to the best matches (off by default)'),
     },
-    async ({ workspaceId, query, limit, filter, rerank }) => {
+    async ({ workspaceId, query, limit, filter, rerank, graph }) => {
       try {
-        return asText(await api.query({ workspaceId, query, limit, filter, rerank }));
+        return asText(await api.query({ workspaceId, query, limit, filter, rerank, graph }));
       } catch (error) {
         return asError(error);
       }
@@ -407,6 +421,66 @@ export function createOctoMcpServer(api: OctoApi): McpServer {
     async ({ workspaceId, documentId }) => {
       try {
         return asText(await api.deleteDocument({ workspaceId, documentId }));
+      } catch (error) {
+        return asError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'link_documents',
+    'Record links between documents of a workspace, such as a case that cites another or a runbook that depends on a spec. query_workspace with graph: true follows them in both directions. A link that already exists is left as it is; deleting a document deletes its links. Requires the write scope and an operator or higher role.',
+    {
+      workspaceId: z.string().describe('The workspace the documents belong to'),
+      links: z
+        .array(
+          z.object({
+            fromDocumentId: z.string().describe('The linking document (from list_documents)'),
+            toDocumentId: z.string().describe('The linked document'),
+            relation: z.string().describe('A lowercase word for the link, such as cites, depends_on or supersedes'),
+          })
+        )
+        .min(1)
+        .max(1000)
+        .describe('Up to 1000 links'),
+    },
+    async ({ workspaceId, links }) => {
+      try {
+        return asText(await api.addDocumentLinks({ workspaceId, links }));
+      } catch (error) {
+        return asError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'list_document_links',
+    'List the links into and out of one document, or every link in a workspace (up to 5000). Read-only; requires the read scope.',
+    {
+      workspaceId: z.string().describe('The workspace to list links from'),
+      documentId: z.string().optional().describe('Only links into or out of this document'),
+    },
+    async ({ workspaceId, documentId }) => {
+      try {
+        return asText(await api.listDocumentLinks({ workspaceId, documentId }));
+      } catch (error) {
+        return asError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'unlink_documents',
+    'Remove one link between two documents. Requires the write scope and an operator or higher role.',
+    {
+      workspaceId: z.string().describe('The workspace the documents belong to'),
+      fromDocumentId: z.string().describe('The linking document'),
+      toDocumentId: z.string().describe('The linked document'),
+      relation: z.string().describe('The link\'s relation'),
+    },
+    async ({ workspaceId, fromDocumentId, toDocumentId, relation }) => {
+      try {
+        return asText(await api.removeDocumentLink({ workspaceId, fromDocumentId, toDocumentId, relation }));
       } catch (error) {
         return asError(error);
       }

@@ -193,6 +193,8 @@ interface ToolInfo {
 // workspace checks (ingest takes either fileId or title and text).
 const TOOL_ARGUMENTS: Record<string, Record<string, unknown>> = {
   ingest_document: { title: 'probe', text: 'probe' },
+  link_documents: { links: [{ fromDocumentId: randomUUID(), toDocumentId: randomUUID(), relation: 'cites' }] },
+  unlink_documents: { relation: 'cites' },
 };
 
 const mcpHeaders = (token: string) => ({

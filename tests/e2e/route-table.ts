@@ -46,6 +46,8 @@ export interface RouteSpec {
 }
 
 const NOW = '2026-01-01T00:00:00Z';
+const LINK_FROM = '00000000-0000-4000-8000-0000000000a1';
+const LINK_TO = '00000000-0000-4000-8000-0000000000a2';
 
 export const ROUTE_TABLE: RouteSpec[] = [
   // Public
@@ -157,6 +159,9 @@ export const ROUTE_TABLE: RouteSpec[] = [
   { method: 'GET', path: '/api/rag/documents/:id', tenancy: 'workspace', scope: 'read', ws: 'query', source: 'src/routes/rag.ts' },
   { method: 'POST', path: '/api/rag/documents/:id/rename', tenancy: 'workspace', scope: 'write', ws: 'body', body: { title: 'probe' }, source: 'src/routes/rag.ts' },
   { method: 'DELETE', path: '/api/rag/documents/:id', tenancy: 'workspace', scope: 'delete', ws: 'query', source: 'src/routes/rag.ts' },
+  { method: 'POST', path: '/api/rag/links', tenancy: 'workspace', scope: 'write', ws: 'body', body: { links: [{ fromDocumentId: LINK_FROM, toDocumentId: LINK_TO, relation: 'cites' }] }, source: 'src/routes/rag.ts' },
+  { method: 'GET', path: '/api/rag/links', tenancy: 'workspace', scope: 'read', ws: 'query', source: 'src/routes/rag.ts' },
+  { method: 'DELETE', path: '/api/rag/links', tenancy: 'workspace', scope: 'write', ws: 'query', query: { fromDocumentId: LINK_FROM, toDocumentId: LINK_TO, relation: 'cites' }, source: 'src/routes/rag.ts' },
 
   // Ledger and graph
   { method: 'POST', path: '/api/epistemic/record', tenancy: 'workspace', scope: 'write', ws: 'body', body: { kind: 'entity', name: 'probe' }, source: 'src/routes/epistemic.ts' },

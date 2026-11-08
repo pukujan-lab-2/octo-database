@@ -56,8 +56,10 @@ describe('Octo MCP adapter', () => {
       'graph_health',
       'guide',
       'ingest_document',
+      'link_documents',
       'list_analytics_schedules',
       'list_analytics_specs',
+      'list_document_links',
       'list_documents',
       'list_files',
       'list_ops_events',
@@ -80,6 +82,7 @@ describe('Octo MCP adapter', () => {
       'rename_document',
       'retry_job',
       'schedule_analytics',
+      'unlink_documents',
       'upload_file',
       'whoami',
     ]);

@@ -1892,6 +1892,125 @@ export async function dbMatchChunksHybrid(
   );
 }
 
+/**
+ * The graph step of search (issue #42): the best passage of each document linked
+ * to the seed documents, most-linked first. Same filter and access check as
+ * dbMatchChunksHybrid.
+ */
+export async function dbMatchLinkedChunks(
+  workspaceId: string,
+  queryVector: number[],
+  seedDocumentIds: string[],
+  options: {
+    relations?: string[];
+    hops?: number;
+    matchCount?: number;
+    filter?: { documentIds?: string[]; titlePrefix?: string; latestVersionOnly?: boolean };
+  } = {}
+): Promise<
+  Array<{
+    chunkId: string;
+    documentVersionId: string;
+    documentId: string;
+    title: string;
+    versionNumber: number;
+    page: number | null;
+    content: string;
+    chunkIndex: number;
+    similarity: number | null;
+    links: number;
+    linkedFrom: string[];
+    model: string;
+    modelVersion: string;
+    chunker: string;
+  }>
+> {
+  if (seedDocumentIds.length === 0) return [];
+  const filter = options.filter ?? {};
+  return query(
+    `SELECT chunk_id AS "chunkId", document_version_id AS "documentVersionId",
+            document_id AS "documentId", title, version_number AS "versionNumber", page,
+            content, chunk_index AS "chunkIndex", similarity, links, linked_from AS "linkedFrom",
+            model, model_version AS "modelVersion", chunker
+     FROM octo.match_linked_chunks($1, $2::halfvec, $3::uuid[], $4::text[], $5, $6, $7::uuid[], $8, $9)`,
+    [
+      workspaceId,
+      `[${queryVector.join(',')}]`,
+      seedDocumentIds,
+      options.relations && options.relations.length > 0 ? options.relations : null,
+      options.hops ?? 1,
+      options.matchCount ?? 10,
+      filter.documentIds && filter.documentIds.length > 0 ? filter.documentIds : null,
+      filter.titlePrefix ? filter.titlePrefix : null,
+      filter.latestVersionOnly === true,
+    ]
+  );
+}
+
+export interface DocumentLink {
+  fromDocumentId: string;
+  toDocumentId: string;
+  relation: string;
+}
+
+/**
+ * Adds links between documents of one workspace. A link that already exists is
+ * left as it is. Throws the Postgres error when a document is not in the workspace
+ * (23503) or the caller may not write (RLS).
+ */
+export async function dbAddDocumentLinks(
+  workspaceId: string,
+  links: DocumentLink[],
+  createdBy: string
+): Promise<{ added: number }> {
+  const rows = await query<{ n: string }>(
+    `WITH ins AS (
+       INSERT INTO octo.document_links (workspace_id, from_document_id, to_document_id, relation, created_by)
+       SELECT $1, f, t, r, $5
+       FROM unnest($2::uuid[], $3::uuid[], $4::text[]) AS l(f, t, r)
+       ON CONFLICT DO NOTHING
+       RETURNING 1
+     )
+     SELECT count(*)::text AS n FROM ins`,
+    [
+      workspaceId,
+      links.map((l) => l.fromDocumentId),
+      links.map((l) => l.toDocumentId),
+      links.map((l) => l.relation),
+      createdBy,
+    ]
+  );
+  return { added: Number(rows[0]?.n ?? 0) };
+}
+
+/** Links into or out of one document, or every link in the workspace. */
+export async function dbListDocumentLinks(
+  workspaceId: string,
+  documentId?: string
+): Promise<Array<DocumentLink & { createdAt: string }>> {
+  return query(
+    `SELECT from_document_id AS "fromDocumentId", to_document_id AS "toDocumentId",
+            relation, created_at AS "createdAt"
+     FROM octo.document_links
+     WHERE workspace_id = $1
+       AND ($2::uuid IS NULL OR from_document_id = $2 OR to_document_id = $2)
+     ORDER BY created_at, from_document_id, to_document_id, relation
+     LIMIT 5000`,
+    [workspaceId, documentId ?? null]
+  );
+}
+
+/** Removes one link; false when it did not exist. */
+export async function dbRemoveDocumentLink(workspaceId: string, link: DocumentLink): Promise<boolean> {
+  const rows = await query(
+    `DELETE FROM octo.document_links
+     WHERE workspace_id = $1 AND from_document_id = $2 AND to_document_id = $3 AND relation = $4
+     RETURNING 1`,
+    [workspaceId, link.fromDocumentId, link.toDocumentId, link.relation]
+  );
+  return rows.length > 0;
+}
+
 /** The workspace's document catalog, newest first, with version and chunk counts. */
 export async function dbListDocuments(
   workspaceId: string

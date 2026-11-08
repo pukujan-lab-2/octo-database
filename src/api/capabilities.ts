@@ -316,6 +316,28 @@ export const OCTO_CAPABILITIES: CapabilityDescriptor[] = [
       'Delete an indexed document and its derived versions, chunks, and embeddings. Destructive; requires owner or admin role.',
   },
   {
+    action: 'rag.link',
+    method: 'POST',
+    path: '/api/rag/links',
+    requiredScope: 'write',
+    description:
+      'Record links between documents of an authorized workspace (from, to, relation). A query with graph: true follows them. Requires operator role or higher.',
+  },
+  {
+    action: 'rag.links',
+    method: 'GET',
+    path: '/api/rag/links?workspaceId=<id>[&documentId=<id>]',
+    requiredScope: 'read',
+    description: 'List the links into and out of one document, or every link in an authorized workspace.',
+  },
+  {
+    action: 'rag.unlink',
+    method: 'DELETE',
+    path: '/api/rag/links?workspaceId=<id>&fromDocumentId=<id>&toDocumentId=<id>&relation=<relation>',
+    requiredScope: 'write',
+    description: 'Remove one link between two documents. Requires operator role or higher.',
+  },
+  {
     action: 'keys.revoke',
     method: 'DELETE',
     path: '/api/keys/<keyId>',
@@ -453,7 +475,7 @@ export function capabilitiesForScopes(scopes: string[]): CapabilityDescriptor[] 
 export function minimumRoleForCapability(action: string): 'member' | 'operator' | 'admin' {
   if (action === 'files.delete' || action === 'rag.delete' || action === 'ux_analytics.enable') return 'admin';
   if (
-    ['files.upload', 'files.publish', 'files.unpublish', 'files.archive', 'files.restore', 'jobs.enqueue', 'jobs.run', 'epistemic.record', 'graph.project', 'rag.ingest', 'rag.rename'].includes(
+    ['files.upload', 'files.publish', 'files.unpublish', 'files.archive', 'files.restore', 'jobs.enqueue', 'jobs.run', 'epistemic.record', 'graph.project', 'rag.ingest', 'rag.rename', 'rag.link', 'rag.unlink'].includes(
       action
     )
   ) {

@@ -8,9 +8,10 @@
 import { embedTexts, loadEmbeddingConfigFromEnv } from '../rag/embeddings';
 import { RAG_CHUNKER, RAG_CHUNK_OVERLAP, RAG_CHUNK_SIZE, RAG_MODEL_VERSION, embedInBatches, ragChunkConfig } from '../rag/ingest';
 import { chunkKey, chunkText, contentHash, extractText } from '../rag/pipeline';
+import { fuseGraphMatches, GraphHit, parseGraphOption, RELATION_RE, seedDocuments } from '../rag/graph';
 import { applyRerankScores, loadRerankConfigFromEnv, rerankCandidateCount, rerankScores } from '../rag/rerank';
 import { authenticateRequest, keyWorkspaceMatches, requireScope, roleAllows, scopeDenied } from '../server/auth-context';
-import { dbDeleteDocument, dbEnqueueJob, dbEnsureEmbeddingConfig, dbGetArchiveRecord, dbGetDocument, dbGetWorkspaceMembership, dbListDocuments, dbMatchChunksHybrid, dbRenameDocument, dbReplaceChunksAndEmbeddings, dbUpsertDocumentVersion, query } from '../server/db';
+import { dbDeleteDocument, dbEnqueueJob, dbEnsureEmbeddingConfig, dbGetArchiveRecord, dbGetDocument, dbAddDocumentLinks, dbGetWorkspaceMembership, dbListDocumentLinks, dbListDocuments, dbMatchChunksHybrid, dbMatchLinkedChunks, dbRemoveDocumentLink, DocumentLink, dbRenameDocument, dbReplaceChunksAndEmbeddings, dbUpsertDocumentVersion, query } from '../server/db';
 import { readJsonObject, requireUuid, sendJson } from '../server/http';
 import { attributeAgentAction } from '../server/ops';
 import { IncomingMessage, ServerResponse } from 'http';
@@ -170,6 +171,7 @@ export async function handleRagRoutes(
 
     const parsed = (await readJsonObject(req)) as Record<string, any>;
     const { workspaceId, query, limit, filter, rerank } = parsed;
+    const graph = parseGraphOption(parsed.graph);
 
     if (!workspaceId || !query) {
       sendJson(res, 400, { error: 'workspaceId and query are required' });
@@ -178,6 +180,10 @@ export async function handleRagRoutes(
     if (!requireUuid(res, workspaceId, 'workspaceId')) return true;
     if (rerank !== undefined && typeof rerank !== 'boolean') {
       sendJson(res, 400, { error: 'rerank must be a boolean' });
+      return true;
+    }
+    if (typeof graph === 'string') {
+      sendJson(res, 400, { error: graph });
       return true;
     }
 
@@ -229,14 +235,24 @@ export async function handleRagRoutes(
 
     const matchLimit = limit ?? 10;
     const { vectors } = await embedTexts(embeddingConfig, [query]);
-    let results: Array<Awaited<ReturnType<typeof dbMatchChunksHybrid>>[number] & { rerankScore?: number }> =
-      await dbMatchChunksHybrid(
-        workspaceId,
-        query,
-        vectors[0]!,
-        rerankConfig ? rerankCandidateCount(matchLimit) : matchLimit,
-        { documentIds, titlePrefix, latestVersionOnly }
-      );
+    const candidateCount = rerankConfig ? rerankCandidateCount(matchLimit) : matchLimit;
+    let results: Array<Awaited<ReturnType<typeof dbMatchChunksHybrid>>[number] & { graph?: GraphHit; rerankScore?: number }> = await dbMatchChunksHybrid(workspaceId, query, vectors[0]!, candidateCount, {
+      documentIds,
+      titlePrefix,
+      latestVersionOnly,
+    });
+
+    // Graph step (issue #42): follow the links of the documents behind the best
+    // hybrid matches and merge their linked documents' best passages by RRF.
+    if (graph) {
+      const linked = await dbMatchLinkedChunks(workspaceId, vectors[0]!, seedDocuments(results, graph.seeds), {
+        relations: graph.relations,
+        hops: graph.hops,
+        matchCount: candidateCount,
+        filter: { documentIds, titlePrefix, latestVersionOnly },
+      });
+      results = fuseGraphMatches(results, linked).slice(0, candidateCount);
+    }
 
     // Rerank (issue #365): re-score the wider candidate set, then cut to
     // the limit. When no reranker answers, the hybrid order is kept.
@@ -247,20 +263,126 @@ export async function handleRagRoutes(
         results = applyRerankScores(results, scores);
         reranked = true;
       }
-      results = results.slice(0, matchLimit);
     }
+    results = results.slice(0, matchLimit);
 
     sendJson(res, 200, {
       query,
       // Hybrid: a lexical (full-text) arm and a vector arm, fused with RRF. Each
       // match reports which arms found it -- `similarity` is null for a chunk only
       // the lexical arm returned, `lexicalScore` null for a vector-only match.
-      mode: 'hybrid',
+      // The graph step adds passages from linked documents; those carry `graph`.
+      mode: graph ? 'hybrid+graph' : 'hybrid',
       ...(rerankConfig ? { reranked } : {}),
       matches: results,
       // Provenance: each match carries its document, title, version, page (PDFs),
       // and the exact embedding/chunker configuration that produced it.
     });
+    return true;
+  }
+
+  // Document links (issue #42): what the graph step of a query follows.
+  // Add: POST /api/rag/links  body {workspaceId, links: [{fromDocumentId, toDocumentId, relation}]}
+  // List: GET /api/rag/links?workspaceId=<id>[&documentId=<id>]
+  // Remove: DELETE /api/rag/links?workspaceId=<id>&fromDocumentId=<id>&toDocumentId=<id>&relation=<r>
+  if (pathname === '/api/rag/links') {
+    const method = req.method;
+    if (method !== 'POST' && method !== 'GET' && method !== 'DELETE') return false;
+    const auth = await authenticateRequest(req);
+    if (!auth) {
+      sendJson(res, 401, { error: 'UNAUTHENTICATED' });
+      return true;
+    }
+    const scope = method === 'GET' ? 'read' : 'write';
+    if (!requireScope(auth, scope)) {
+      scopeDenied(res, scope);
+      return true;
+    }
+
+    const body = method === 'POST' ? ((await readJsonObject(req)) as Record<string, any>) : null;
+    const workspaceId = body ? body.workspaceId : url.searchParams.get('workspaceId');
+    if (!workspaceId) {
+      sendJson(res, 400, { error: 'workspaceId is required' });
+      return true;
+    }
+    if (!requireUuid(res, workspaceId, 'workspaceId')) return true;
+
+    let links: DocumentLink[] = [];
+    const isLink = (l: any): l is DocumentLink =>
+      l !== null &&
+      typeof l === 'object' &&
+      typeof l.fromDocumentId === 'string' &&
+      UUID_RE.test(l.fromDocumentId) &&
+      typeof l.toDocumentId === 'string' &&
+      UUID_RE.test(l.toDocumentId) &&
+      typeof l.relation === 'string' &&
+      RELATION_RE.test(l.relation) &&
+      l.fromDocumentId.toLowerCase() !== l.toDocumentId.toLowerCase();
+    if (method === 'POST') {
+      if (!Array.isArray(body!.links) || body!.links.length === 0 || body!.links.length > 1000 || !body!.links.every(isLink)) {
+        sendJson(res, 400, {
+          error:
+            'links must be 1-1000 of { fromDocumentId: uuid, toDocumentId: uuid (another document), relation: lowercase word like "cites" }',
+        });
+        return true;
+      }
+      links = body!.links.map((l: DocumentLink) => ({ fromDocumentId: l.fromDocumentId, toDocumentId: l.toDocumentId, relation: l.relation }));
+    } else if (method === 'DELETE') {
+      const link = {
+        fromDocumentId: url.searchParams.get('fromDocumentId'),
+        toDocumentId: url.searchParams.get('toDocumentId'),
+        relation: url.searchParams.get('relation'),
+      };
+      if (!isLink(link)) {
+        sendJson(res, 400, { error: 'fromDocumentId, toDocumentId and relation are required' });
+        return true;
+      }
+      links = [link];
+    }
+    const documentId = method === 'GET' ? url.searchParams.get('documentId') : null;
+    if (documentId !== null && !requireUuid(res, documentId, 'documentId')) return true;
+
+    if (!keyWorkspaceMatches(auth, workspaceId)) {
+      sendJson(res, 403, { error: 'FORBIDDEN: Key restricted to different workspace' });
+      return true;
+    }
+    const mem = await dbGetWorkspaceMembership(workspaceId, auth.principal.id);
+    if (!mem) {
+      sendJson(res, 403, { error: 'FORBIDDEN: Not a member of this workspace' });
+      return true;
+    }
+
+    if (method === 'GET') {
+      sendJson(res, 200, { links: await dbListDocumentLinks(workspaceId, documentId ?? undefined) });
+      return true;
+    }
+    if (!roleAllows(auth, mem.role, 'operator')) {
+      sendJson(res, 403, { error: 'FORBIDDEN: Operator role or higher required to change document links' });
+      return true;
+    }
+
+    if (method === 'DELETE') {
+      const removed = await dbRemoveDocumentLink(workspaceId, links[0]!);
+      if (!removed) {
+        sendJson(res, 404, { error: 'LINK_NOT_FOUND' });
+        return true;
+      }
+      await attributeAgentAction(auth, workspaceId, 'document.unlinked', `Link ${links[0]!.relation} removed`);
+      sendJson(res, 200, { ...links[0], removed: true });
+      return true;
+    }
+
+    try {
+      const { added } = await dbAddDocumentLinks(workspaceId, links, auth.principal.id);
+      await attributeAgentAction(auth, workspaceId, 'document.linked', `${added} document links added`);
+      sendJson(res, 200, { added, unchanged: links.length - added });
+    } catch (err) {
+      if ((err as { code?: string }).code === '23503') {
+        sendJson(res, 404, { error: 'DOCUMENT_NOT_FOUND: every linked document must be in this workspace' });
+        return true;
+      }
+      throw err;
+    }
     return true;
   }
 

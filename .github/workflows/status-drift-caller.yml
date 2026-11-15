@@ -18,4 +18,5 @@ jobs:
   drift:
     uses: Pukujan/agent-stack-train/.github/workflows/oio-status-drift.yml@c94ddab8740c13ca6157ac3b5a13c8a6bcfe53d8
     with:
+      runs_on: ${{ vars.OIO_RUNS_ON || '"ubuntu-latest"' }}
       oio_ref: c94ddab8740c13ca6157ac3b5a13c8a6bcfe53d8

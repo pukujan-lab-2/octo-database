@@ -19,9 +19,9 @@
     ".github/scripts/oio_installer.py": "a2d483805a579eb6916763f95f0153d8f631595eb21c2bcf750e40cbcb5b45b0",
     ".github/scripts/oio_triage.py": "c796ce66a03c3e655b108200b24ca0015bdc17c83bf9504b32d7f57af6609c82",
     ".github/scripts/oio_record.py": "eab420b8b86b32d5df813eb048bb8ba05801bdf1c773c45fea4d469948cab60f",
-    ".github/workflows/oio-close-sweep.yml": "fb0d12389afbe126cd189003b7a521723cbd8e1666b499bd4f49cbf4a0a069c2"
+    ".github/workflows/oio-close-sweep.yml": "e34ba8c2db8cded9cba8ba3ead0abf78f92f791dbe58bd4e567c48366409d65b"
   },
   "agents_block_sha256": "dd08b0a68f4af90c53d164dfdde8dc1996547193a2404965bf4c4adeffa5b9dc",
   "project_extension": ".oio/ontology/project.json",
-  "oio_ref": "c94ddab8740c13ca6157ac3b5a13c8a6bcfe53d8"
+  "oio_ref": "3446a8024857afb84b7b51d044cefb400131fbf7"
 }

@@ -27,6 +27,11 @@ Claude Code's own defaults and loses often enough to matter (#37).
                                  request whose author is not trusted (#91),
                                  shell loops and watches that poll GitHub
                                  faster than the cadence allows (#108),
+                                 code put on the deploy host by hand
+                                 (`scp`/`rsync` to it, `git pull` or a
+                                 `deploy.sh` over `ssh`) instead of through
+                                 Komodo (`.coord/deploy.json` names the
+                                 hosts; server-management#117),
                                  and edits that remove
                                  this guard
     acs_guard.py stop            Stop: block ending a turn while work is not on
@@ -83,6 +88,7 @@ GUARD_NAME = "acs_guard.py"
 ISSUE_FORM = Path(".github/ISSUE_TEMPLATE/observational-issue.yml")
 ISSUE_REF_RE = re.compile(r"\b(?:Refs|Closes|Fixes|Resolves)\b:?\s+(?:[\w.-]+/[\w.-]+)?#\d+", re.IGNORECASE)
 BRANCH_ISSUE_RE = re.compile(r"(?:^|[/_-])(?:issue-?|gh-?)?(\d{1,7})(?=[/_-]|$)")
+TASK_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d{4}$")
 LINK_RE = re.compile(r"^(?:([\w.-]+/[\w.-]+))?#?(\d{1,7})$")
 CHECKPOINT_PREFIX = "PCM "
 SEPARATORS = set(";&|()\n")
@@ -298,10 +304,12 @@ def check_git(sub: str, args: list[str], cwd: Path) -> str | None:
         return need_issue(top, branch, "git push")
     if sub == "worktree" and args[:1] == ["add"]:
         rest = args[1:]
-        path, i = None, 0
+        path, new_branch, i = None, None, 0
         while i < len(rest):
             a = rest[i]
             if a in ("-b", "-B", "--reason"):
+                if a != "--reason" and i + 1 < len(rest):
+                    new_branch = rest[i + 1]
                 i += 2
                 continue
             if not a.startswith("-"):
@@ -315,6 +323,16 @@ def check_git(sub: str, args: list[str], cwd: Path) -> str | None:
         target = (cwd / path).expanduser().resolve()
         allowed = main.parent / "worktrees"
         if main.name == "main" and target.parent == allowed.resolve():
+            task_id = target.name
+            # `continuity worktree remove` proves the merge for task/<TASK-ID>-<slug>; a branch for
+            # another task (or none) in this task's slot can't be cleaned up safely later.
+            wrong_branch = new_branch is not None and not new_branch.startswith(f"task/{task_id}-")
+            if wrong_branch and TASK_ID_RE.fullmatch(task_id):
+                return (
+                    f"git worktree add -b {new_branch} {path}: the worktree for {task_id} must be on a "
+                    f"`task/{task_id}-<slug>` branch. Run `continuity worktree create {task_id}`, which names "
+                    "the branch from the task record."
+                )
             return None
         return (
             f"git worktree add {path}: worktrees go only at <project>/worktrees/<TASK-ID>, beside the "
@@ -465,16 +483,164 @@ def check_gh(args: list[str], cwd: Path, env: dict[str, str] | None = None) -> s
     return None
 
 
+# ---------------------------------------------------------------- hand deploys (server-management#117)
+
+# Services on the deploy host deploy only through Komodo, which acts when a GitHub branch moves.
+# Agents kept copying code there with scp or pulling a branch on the host, which skips review and
+# leaves the host running code no branch holds. `.coord/deploy.json` in an adopter overrides these:
+# `hosts` (an empty list turns the rule off), `how` (where the block message points) and `note`
+# (shown at session start so agents find the host's own tools, such as warm holds; "" turns it off).
+DEPLOY_FILE = Path(".coord") / "deploy.json"
+DEPLOY_DEFAULTS = {
+    "hosts": ["vps", "octo-vps", "100.118.248.35"],
+    "how": "`uv run scripts/deploy.py how <service>` in pukujan-lab-2/server-management says how a service "
+           "deploys; a service with no Komodo path gets one (its `vps/HOSTING.md` section 3), or ask the owner",
+    "note": "Services on the VPS sleep when idle. Before a demo or a timed test, keep a project warm: "
+            "`ssh vps sudo warm check <project> --for <time>` shows what a hold keeps up and whether it would be "
+            "refused, then `ssh vps sudo warm hold <project> --for <time> --reason <why>`. `warm status` lists holds "
+            "and `warm release <project>` ends one; a hold expires by itself. The projects are the `[[project]]` "
+            "entries in pukujan-lab-2/server-management `vps/services.toml` (see its `vps/warm/README.md`).",
+}
+SSH_VALUE_FLAGS = set("BbcDEeFIiJLlmOoPpQRSWw")
+SCP_RSYNC = {"scp", "rsync"}
+# Commands that put code on the host's checkout; reading it (`git log`, `git status`) is fine.
+GIT_MOVES = {"pull", "checkout", "switch", "reset", "merge", "rebase", "restore", "clone"}
+DEPLOY_SCRIPT_RE = re.compile(r"^(?:auto)?deploy\.sh$")
+WRAPPERS = {"sudo", "env", "nohup", "exec", "time", "bash", "sh", "zsh"}
+WRAPPER_VALUE_FLAGS = {"-u", "-g", "-C"}
+
+
+def deploy_config(top: Path | None) -> dict:
+    """The deploy hosts, pointer and note in force for a checkout: the defaults, with the adopter's valid overrides."""
+    config = {"hosts": list(DEPLOY_DEFAULTS["hosts"]), "how": DEPLOY_DEFAULTS["how"], "note": DEPLOY_DEFAULTS["note"]}
+    try:
+        data = json.loads((top / DEPLOY_FILE).read_text(encoding="utf-8")) if top else None
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict):
+        hosts = data.get("hosts")
+        if isinstance(hosts, list) and all(isinstance(h, str) and h.strip() for h in hosts):
+            config["hosts"] = [h.strip() for h in hosts]
+        if isinstance(data.get("how"), str) and data["how"].strip():
+            config["how"] = data["how"].strip()
+        if isinstance(data.get("note"), str):
+            config["note"] = data["note"].strip()
+    return config
+
+
+def host_of(target: str) -> str:
+    """``vps`` from ``ubuntu@vps``, ``ssh://ubuntu@vps:22`` or ``[vps]``."""
+    host = target.removeprefix("ssh://").rpartition("@")[2]
+    if host.startswith("["):
+        return host[1:].partition("]")[0].lower()
+    return host.partition(":")[0].lower()
+
+
+def unwrap(args: list[str]) -> list[str]:
+    """The command under ``sudo -u x``, ``env A=b``, ``nohup`` and the like."""
+    i, wrapped = 0, False
+    while i < len(args):
+        a = args[i]
+        if Path(a).name in WRAPPERS or (wrapped and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", a)):
+            wrapped = True
+            i += 1
+        elif wrapped and a.startswith("-") and a != "-c":
+            i += 2 if a in WRAPPER_VALUE_FLAGS else 1
+        else:
+            break
+    return args[i:]
+
+
+def ssh_target(args: list[str]) -> tuple[str, list[str]] | None:
+    """(host, remote command words) of an ``ssh`` call. OpenSSH reads options after the host too."""
+
+    def options(i: int) -> int:
+        while i < len(args) and args[i].startswith("-") and len(args[i]) > 1:
+            if args[i] == "--":
+                return i + 1
+            i += 2 if len(args[i]) == 2 and args[i][1] in SSH_VALUE_FLAGS else 1
+        return i
+
+    i = options(1)
+    if i >= len(args):
+        return None
+    return host_of(args[i]), args[options(i + 1):]
+
+
+def deploys_by_hand(args: list[str]) -> str | None:
+    """What a command run on the deploy host does to its code, or None for an inspection."""
+    args = unwrap(args)
+    if len(args) > 1 and args[0] == "-c":  # `bash -c '<script>'`
+        return next(filter(None, map(deploys_by_hand, segments(args[1]))), None)
+    if not args:
+        return None
+    if DEPLOY_SCRIPT_RE.match(Path(args[0]).name):
+        return f"runs `{Path(args[0]).name}`"
+    call = git_call(args, Path("."))
+    if call and call[0] in GIT_MOVES:
+        return f"runs `git {call[0]}`"
+    return None
+
+
+def hand_deploy(cwd: Path, env: dict[str, str], args: list[str], rest: list[list[str]]) -> str | None:
+    """Why a command puts code on the deploy host outside Komodo, or None.
+
+    ``rest`` is the simple commands after this one: an ``ssh host <<EOF`` reads them as its script.
+    """
+    args = unwrap(args)
+    name = Path(args[0]).name if args else ""
+    if name not in SCP_RSYNC and name != "ssh":
+        return None
+    top = top_level(cwd)
+    if top is None or not is_adopter(top):
+        project = os.environ.get("CLAUDE_PROJECT_DIR")
+        top = top_level(Path(project)) if project else None
+        if top is None or not is_adopter(top):
+            return None
+    config = deploy_config(top)
+    hosts = {h.lower() for h in config["hosts"]}
+    if not hosts:
+        return None
+    what = None
+    if name in SCP_RSYNC:
+        dest = args[-1] if len(args) > 1 else ""
+        if ":" in dest and not dest.startswith("-") and host_of(dest) in hosts:
+            what = f"`{name}` copies files to `{host_of(dest)}`"
+    else:
+        target = ssh_target(args)
+        if target and target[0] in hosts:
+            host, words = target
+            stdin = next((n for n, w in enumerate(words) if w in ("<", "<<")), len(words))
+            # `ssh host <<EOF` (or `ssh host bash -s <<EOF`) reads the next lines as its script.
+            remote = segments(" ".join(words[:stdin])) + (rest if words[stdin:stdin + 1] == ["<<"] else [])
+            for step in remote:
+                done = deploys_by_hand(step)
+                if done:
+                    what = f"this {done} on `{host}`"
+                    break
+    if what is None or env_issue(top, env):
+        return None
+    return (
+        f"Deploying by hand: {what}. Services on the deploy host deploy only through Komodo: merge to the "
+        f"branch that deploys the service and Komodo picks it up within 3 minutes. {config['how']}. "
+        "Inspection (`docker ps`, `journalctl`, `cat`, `systemctl status`, `sudo warm ...`) is fine. "
+        f"If the owner directed this exact change, prefix the command with `{ISSUE_ENV}=<owner/repo>#N` "
+        "naming the issue that records it."
+    )
+
+
 def check_bash(command: str, cwd: Path) -> str | None:
     reason = polls_too_fast(command, cwd)
     if reason:
         return reason
-    for env, args in segments_with_env(command):
+    parts = segments_with_env(command)
+    for n, (env, args) in enumerate(parts):
         if args[0] == "cd" and len(args) > 1:
             cwd = (cwd / args[1]).expanduser()
             continue
         call = git_call(args, cwd)
-        reason = check_git(*call) if call else check_gh(args, cwd, env) or wrong_stamp(args)
+        reason = (check_git(*call) if call else check_gh(args, cwd, env) or wrong_stamp(args)) \
+            or hand_deploy(cwd, env, args, [a for _, a in parts[n + 1:]])
         if reason:
             return reason
     return None
@@ -577,6 +743,7 @@ def pre_tool(event: dict) -> str | None:
 
 # Stop looks at every stack checkout the session worked in, found from its transcript (#69).
 TRANSCRIPT_TAIL = 4 * 1024 * 1024
+TRANSCRIPT_HEAD = 256 * 1024  # enough to reach the first timestamped line
 MAX_CHECKOUTS = 15
 MAX_LOOKUPS = 60
 MAX_STOP_RETRIES = 5  # blocked retried stops per session before the guard lets one through
@@ -612,12 +779,83 @@ def transcript_events(path: str) -> list[dict]:
     return events
 
 
+# Commands that only read (#131). A checkout the session ran nothing else in was looked at, not
+# worked in, so its old uncommitted changes are not this session's to push. Anything not listed
+# here counts as work: a script, an unknown tool, or a git subcommand that has a writing form.
+READ_ONLY_GIT = {
+    "status", "log", "diff", "show", "rev-parse", "rev-list", "ls-files", "ls-remote", "ls-tree", "cat-file",
+    "for-each-ref", "describe", "blame", "shortlog", "grep", "merge-base", "name-rev", "count-objects",
+    "diff-tree", "diff-index", "diff-files", "show-ref", "check-ignore", "check-attr", "version", "help",
+}
+# (subcommand, first argument) for subcommands that read only in this form; "" is no argument at all.
+READ_ONLY_GIT_FORMS = {
+    ("stash", "list"), ("stash", "show"), ("worktree", "list"), ("remote", ""), ("remote", "-v"),
+    ("remote", "get-url"), ("remote", "show"), ("branch", ""), ("branch", "--show-current"),
+    ("config", "--get"), ("config", "--get-all"), ("config", "--list"), ("config", "-l"),
+}
+READ_ONLY_TOOLS = {
+    "ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "du", "df", "stat", "file", "pwd",
+    "echo", "printf", "true", "false", "test", "[", "which", "tree", "sort", "uniq", "cut", "tr", "nl",
+    "basename", "dirname", "realpath", "readlink", "date", "diff", "cmp", "jq", "id", "hostname", "uname",
+}
+REDIRECT_CHARS = set("<>&|")
+NOT_A_FILE = {"/dev/null", "/dev/stdout", "/dev/stderr", "-"}
+
+
+def strip_redirects(args: list[str]) -> tuple[bool, list[str]]:
+    """(does it write a file, the arguments without redirections).
+
+    `segments` splits on `;&|()` only, so `2>/dev/null`, `2>&1` and `> out.txt` stay in a command's
+    arguments as an operator and its target.
+    """
+    wrote = False
+    kept: list[str] = []
+    i = 0
+    while i < len(args):
+        token = args[i]
+        if token and set(token) <= REDIRECT_CHARS and ("<" in token or ">" in token):
+            target = args[i + 1] if i + 1 < len(args) else ""
+            if kept and kept[-1].isdigit():
+                kept.pop()  # the file descriptor in `2>`
+            if ">" in token and target not in NOT_A_FILE and not ("&" in token and target.isdigit()):
+                wrote = True
+            i += 2
+        else:
+            kept.append(token)
+            i += 1
+    return wrote, kept
+
+
+def only_reads(args: list[str]) -> bool:
+    """True when this simple command is on the read-only lists and writes no file."""
+    wrote, args = strip_redirects(args)
+    if wrote:
+        return False
+    if not args:
+        return True
+    name = Path(args[0]).name
+    if name == "git":
+        call = git_call(args, Path("."))
+        if call is None:
+            return True  # `git --version`, a bare `git`
+        sub, rest, _cwd = call
+        return sub in READ_ONLY_GIT or (sub, rest[0] if rest else "") in READ_ONLY_GIT_FORMS
+    return name in READ_ONLY_TOOLS
+
+
 def session_paths(event: dict, cwd: Path) -> tuple[list[Path], list[Path]]:
-    """(directories the session worked in, files it wrote), from Edit/Write paths and `cd`/`git -C` targets."""
+    """(directories the session worked in, files it wrote).
+
+    A directory counts when the session edited a file in it or ran a command there that could write:
+    one after a `cd`, one with `git -C`, or one in the folder the tool call started in. Commands that
+    only read (`only_reads`) do not count (#131).
+    """
     dirs: list[Path] = []
     written: list[Path] = []
+    carried: Path | None = None  # the last `cd` target, for a harness that does not record each call's folder
     for entry in transcript_events(event.get("transcript_path") or ""):
-        here = Path(entry["cwd"]) if isinstance(entry.get("cwd"), str) else cwd
+        recorded = isinstance(entry.get("cwd"), str)
+        here = Path(entry["cwd"]) if recorded else (carried or cwd)
         content = (entry.get("message") or {}).get("content") if isinstance(entry.get("message"), dict) else None
         for item in content if isinstance(content, list) else []:
             if not isinstance(item, dict) or item.get("type") != "tool_use":
@@ -633,13 +871,19 @@ def session_paths(event: dict, cwd: Path) -> tuple[list[Path], list[Path]]:
                 for args in segments(tool_input["command"]):
                     if args[0] == "cd" and len(args) > 1 and args[1] != "-":
                         where = resolve(args[1], where)
-                        dirs.append(where)
-                    elif Path(args[0]).name == "git":
+                        continue
+                    if only_reads(args):
+                        continue
+                    target = where
+                    if Path(args[0]).name == "git":
                         i = 1
                         while i < len(args) and args[i].startswith("-"):  # only flags before the subcommand
                             if args[i] == "-C" and i + 1 < len(args):
-                                dirs.append(resolve(args[i + 1], where))
+                                target = resolve(args[i + 1], target)
                             i += 2 if args[i] in ("-C", "-c", "--git-dir", "--work-tree") else 1
+                    dirs.append(target)
+                if not recorded:
+                    carried = where
     return dirs, written
 
 
@@ -656,12 +900,14 @@ def session_checkouts(project: Path, event: dict) -> tuple[list[Path], list[Path
     dirs, written = session_paths(event, project)
     tops: list[Path] = []
     seen: list[Path] = []
+    tried: set[Path] = set()
     lookups = 0
     for d in [project, *dirs]:
         if len(tops) >= MAX_CHECKOUTS or lookups >= MAX_LOOKUPS:
             break
-        if any(within(d, s) for s in seen):
+        if d in tried or any(within(d, s) for s in seen):
             continue
+        tried.add(d)
         lookups += 1
         top = top_level(d)
         if top is None or any(top.resolve() == s.resolve() for s in seen):
@@ -976,15 +1222,44 @@ def merged_at_tip(top: Path, branch: str) -> bool:
 
 
 def session_began(event: dict) -> float | None:
-    """When the session's transcript starts (seconds since the epoch), or None without one."""
-    for entry in transcript_events(event.get("transcript_path") or ""):
-        stamp = entry.get("timestamp")
+    """When the session's transcript starts (seconds since the epoch), or None without one.
+
+    Read from the head of the file: `transcript_events` keeps only the tail, which in a long session
+    starts well after the session did.
+    """
+    try:
+        with open(event.get("transcript_path") or "", "rb") as fh:
+            head = fh.read(TRANSCRIPT_HEAD).decode("utf-8", errors="replace").splitlines()
+    except (OSError, TypeError):
+        return None
+    for line in head:
+        try:
+            stamp = json.loads(line).get("timestamp")
+        except (ValueError, AttributeError):
+            continue
         if isinstance(stamp, str):
             try:
                 return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
             except ValueError:
                 continue
     return None
+
+
+def changed_since(top: Path, path: str, since: float) -> bool:
+    """Whether a tracked path changed at or after ``since``, by its date on disk.
+
+    A deleted file has no date, so the nearest folder that still exists answers for it: deleting an
+    entry updates its folder. A path that cannot be read at all counts as changed.
+    """
+    path = path.split(" -> ")[-1].strip('"')  # a rename shows as `old -> new`
+    p = top / path
+    while True:
+        try:
+            return p.lstat().st_mtime >= since
+        except OSError:
+            if p == top or p.parent == p:
+                return True
+            p = p.parent
 
 
 def unpushed_branches(top: Path, branch: str | None, since: float | None) -> list[tuple[str, int]]:
@@ -1005,11 +1280,14 @@ def unpushed_branches(top: Path, branch: str | None, since: float | None) -> lis
     return found
 
 
-def checkout_problems(top: Path, written: list[Path], local_only: bool = False, since: float | None = None) -> tuple[list[str], list[str]]:
+def checkout_problems(top: Path, written: list[Path], local_only: bool = False, since: float | None = None,
+                      own: bool = True) -> tuple[list[str], list[str]]:
     """(problems, notes) that keep one checkout's work off GitHub.
 
     ``local_only`` keeps to work that exists only on this machine and skips the checkpoint and
-    pull-request checks, which an agent may not be able to fix.
+    pull-request checks, which an agent may not be able to fix. ``own`` is False for a checkout other
+    than the session's project: there, an uncommitted change older than the session is another
+    session's work, so it is a note and not a problem (#131).
     """
     problems: list[str] = []
     notes: list[str] = []
@@ -1027,6 +1305,12 @@ def checkout_problems(top: Path, written: list[Path], local_only: bool = False, 
         path for line in (git(top, "status", "--porcelain", "--untracked-files=no") or "").splitlines()
         if line.strip() and (path := line.split(None, 1)[-1]) not in state
     ]
+    if not own and since is not None:
+        old = [path for path in tracked if not changed_since(top, path, since)]
+        if old:
+            tracked = [path for path in tracked if path not in old]
+            notes.append(f"{len(old)} uncommitted change(s) to tracked files on {where} ({names(old)}) are older than "
+                         "this session. They are not yours to commit or push; leave them and tell the owner.")
     if tracked:
         problems.append(f"{len(tracked)} uncommitted change(s) to tracked files on {where} ({names(tracked)}): {fix}.")
     mine = [str(p.resolve().relative_to(top.resolve())) for p in written if within(p, top)]
@@ -1114,10 +1398,12 @@ def stop(event: dict) -> str | None:
     project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or os.getcwd())
     tops, written = session_checkouts(project, event)
     since = session_began(event)
+    home = top_level(project)
     problems: list[str] = []
     notes: list[str] = []
     for top in tops:
-        found, noted = checkout_problems(top, written, local_only=retry, since=since)
+        own = home is not None and top.resolve() == home.resolve()
+        found, noted = checkout_problems(top, written, local_only=retry, since=since, own=own)
         problems += [f"- `{top}`: {p}" for p in found]
         notes += [f"- `{top}`: {n}" for n in noted]
     if not problems:
@@ -1304,6 +1590,9 @@ def session_start(event: dict) -> str | None:
     if records:
         notes.append(records)
     notes.append(cadence_note(top))
+    note = deploy_config(top)["note"]
+    if note:
+        notes.append(note)
     stranded = overdue_branches(top, default)
     if stranded:
         notes.append(

@@ -9,6 +9,24 @@ SQL surface or — when you need a direct connection — with its own connection
 
 ---
 
+## Octo is the product, octo-vps is the machine
+
+Two things in this stack are called "octo". **Octo** is the workspace data
+platform — this repository, `octo-database`. `octo-vps` is the Tailscale
+hostname of the VPS that runs Octo alongside a dozen unrelated services
+(server-management `vps/PLAN.md`). Deploy docs, Komodo stacks, and server
+inventories say "octo" when they mean the host. The host is not the product.
+
+On 2026-11-21 a Study OS agent, asked where lesson media should live, answered
+"Octo doesn't do object storage itself" and planned a fresh `study-os-media`
+R2 bucket with its own scoped key, because it had resolved "octo" to the VPS
+it deploys to. Octo's Files capability had been live the whole time (incident
+#94). Before you conclude Octo lacks a capability, check `GET /api/capabilities`
+with your key or the capability table in Octo's README. "I didn't think Octo
+did that" is not a demonstrated incompatibility.
+
+---
+
 ## You consume Octo; you do not change it
 
 **Octo's repository is read-only to its adopters.** Consuming Octo (via its API, MCP, or
@@ -46,6 +64,20 @@ All four are the same mistake. You are not the project's database operator — O
 Instead: **provision the workspace database through Octo, then reach it either with
 your Octo API key (run SQL through Octo) or with an ordinary Postgres client.** That is
 the whole job.
+
+The same rule covers files and media. Do not create a project bucket in R2, S3,
+or any other object store for an Octo-served project — no "media bucket", no
+"uploads bucket", no bucket with its own scoped key and custom domain. Octo's
+Files capability already stores bytes in R2 per workspace: upload, list,
+download, thumbnails, short-lived signed URLs, publish/unpublish to a public
+HTTPS URL, scoped share links, a gallery, and cold archival to Google Drive.
+Use it with the `files` scope on your workspace key: MCP `upload_file`,
+`list_files`, `download_file`; HTTP under `/api/files` (publish and unpublish
+at `/api/files/<id>/publish|unpublish`, shares at `/api/workspaces/shares`).
+A bucket of your own fragments the data layer exactly like a database of your
+own, and it puts raw cloud storage credentials in the project — credentials
+Octo's design keeps on the server. Study OS planned exactly this bucket before
+the owner caught it (incident #94).
 
 ## Why
 
@@ -624,9 +656,14 @@ SQL surface, and an API key does **not** authenticate `/api/vault/open`.
 - Vault: `GET /api/vault/open`, `POST /api/vault/open/lease`,
   `POST /api/vault/lease/renew`, `GET /api/vault/lease/info`,
   `ANY /api/vault/proxy[/<target>]`, `ANY /api/vault/relay/<routeKey>/…`
+- Files: `POST /api/files/upload`, `GET /api/files`, `GET /api/files/download`,
+  `GET /api/files/thumbnail`, `POST /api/files/<id>/publish`,
+  `POST /api/files/<id>/unpublish`, `DELETE /api/files/<id>`,
+  `POST /api/files/<id>/archive|restore`; shares at `POST /api/workspaces/shares`,
+  gallery at `GET /api/gallery`
 - MCP tools `create_workspace`, `query_workspace_database`, `provision_database`,
   `register_dataset`, `query_dataset`, `get_analytics_query_status`,
-  `get_analytics_result`
+  `get_analytics_result`, `upload_file`, `list_files`, `download_file`
 - Octo README, "Slice 21"; `docs/self-hosting.md`
 
 ## Adopting an existing project that already runs its own datastore
@@ -666,6 +703,18 @@ with its own scoped role (pgvector-ready). Reach it either way:
   string and store it as a secret. A workspace that still lacks one — created before
   auto-provision, or while `OCTO_ADMIN_URL` was unset — gets it from
   `provision_database` | `POST /api/workspaces/<id>/database`, returned once.
+
+**Files and media live in Octo too.** Octo stores file bytes in R2 per workspace:
+upload, list, download, thumbnails, short-lived signed URLs, publish to a public
+HTTPS URL, scoped share links, gallery, cold archive. Use the `files` scope — MCP
+`upload_file` / `list_files` / `download_file`, HTTP under `/api/files`. Do not
+create a project R2/S3 bucket or hold raw cloud storage credentials; Octo keeps
+those on the server.
+
+**Octo is the product, not the host.** `octo-vps` is the machine Octo runs on,
+and deploy docs often say "octo" when they mean that machine. Before claiming
+Octo lacks a capability, check `GET /api/capabilities` or the README capability
+table (incident #94).
 
 **Historical analytics lives in Octo too.** For analytical questions over large
 history, register immutable Parquet dataset versions and run a named query spec with
